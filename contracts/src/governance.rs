@@ -7,7 +7,7 @@ use crate::common::{_emit_action_rejected, _extend_persistent_ttl, DEFAULT_GOV_P
 use crate::errors::ContractError;
 use crate::types::{
     DataKeyCore, DataKeyExt, DataKeyScoped, GovAction, GovProposal, GovProposalStatus, RuntimeMode,
-    Amendment, AmendmentStatus, ConstitutionMetadata,
+    Amendment, AmendmentStatus, ConstitutionMetadata, ConfigChangePayload,
 };
 use soroban_sdk::{symbol_short, Address, Env};
 
@@ -496,7 +496,7 @@ pub fn propose_amendment(
     env: Env,
     proposer: Address,
     parameter_name: soroban_sdk::Symbol,
-    new_value: soroban_sdk::Val,
+    new_value: ConfigChangePayload,
 ) -> Result<u64, ContractError> {
     _require_supported_schema(&env)?;
     proposer.require_auth();
