@@ -1335,30 +1335,8 @@ fn _complete_settlement(
 
     _clear_dispute_round_storage(env, round_id, &participants);
 
-    // Mode-scoped position cleanup (eliminates redundant storage delete lookups)
-    match round.mode {
-        RoundMode::UpDown => {
-            for i in 0..participants.len() {
-                if let Some(user) = participants.get(i) {
-                    env.storage()
-                        .persistent()
-                        .remove(&DataKeyScoped::Position(round_id, user));
-                }
-            }
-        }
-        RoundMode::Precision => {
-            for i in 0..participants.len() {
-                if let Some(user) = participants.get(i) {
-                    env.storage()
-                        .persistent()
-                        .remove(&DataKeyScoped::PrecisionPosition(round_id, user.clone()));
-                    env.storage()
-                        .persistent()
-                        .remove(&DataKeyScoped::PrecisionCommitment(round_id, user));
-                }
-            }
-        }
-    }
+    // `_clear_dispute_round_storage` above performs the same participant key
+    // cleanup for every mode, so avoid a second per-participant delete pass.
     env.storage()
         .persistent()
         .remove(&DataKeyScoped::RoundParticipants(round_id));

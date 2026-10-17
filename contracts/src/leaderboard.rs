@@ -32,6 +32,7 @@ use crate::types::{
     DataKeyCore, DataKeyExt, DataKeyScoped, LeaderboardEntry, SeasonArchive,
     SeasonLeaderboardEntry, UserStats,
 };
+use alloc::vec::Vec as StdVec;
 use soroban_sdk::{symbol_short, Address, Env, Vec};
 
 fn lifetime_user_stats(env: &Env, user: &Address) -> UserStats {
@@ -208,36 +209,37 @@ fn refresh_one(
     wins: bool,
 ) {
     let old: Vec<Address> = env.storage().persistent().get(key).unwrap_or(Vec::new(env));
+    let mut candidate_addresses: StdVec<Address> = old.iter().chain(participants.iter()).collect();
+    candidate_addresses.sort_unstable();
+    candidate_addresses.dedup();
     let mut candidates = Vec::new(env);
-    for a in old.iter().chain(participants.iter()) {
-        if !candidates.contains(a.clone()) {
-            candidates.push_back(a);
-        }
+    for addr in candidate_addresses {
+        candidates.push_back(addr);
     }
-    // Insertion sort by metric descending, address ascending. Candidate sets are bounded by 100 + participants.
-    for i in 1..candidates.len() {
-        let item = candidates.get_unchecked(i);
-        let metric = stats(&item);
-        let mut j = i;
-        while j > 0 {
-            let prev = candidates.get_unchecked(j - 1);
-            let p = stats(&prev);
-            let before = if wins {
-                metric.total_wins > p.total_wins
-                    || (metric.total_wins == p.total_wins && item < prev)
-            } else {
-                metric.best_streak > p.best_streak
-                    || (metric.best_streak == p.best_streak && item < prev)
-            };
-            if !before {
-                break;
-            }
-            candidates.set(j, prev);
-            j -= 1;
-        }
-        candidates.set(j, item);
+    // Cache each metric once; repeated persistent reads inside the sort dominate
+    // resolution cost at the maximum participant count.
+    let mut ranked: StdVec<(Address, u32)> = candidates
+        .iter()
+        .map(|a| {
+            let user_stats = stats(&a);
+            (
+                a,
+                if wins {
+                    user_stats.total_wins
+                } else {
+                    user_stats.best_streak
+                },
+            )
+        })
+        .collect();
+    ranked.sort_by(|(a_addr, a_metric), (b_addr, b_metric)| {
+        b_metric.cmp(a_metric).then_with(|| a_addr.cmp(b_addr))
+    });
+    let mut sorted = Vec::new(env);
+    for (addr, _) in ranked {
+        sorted.push_back(addr);
     }
-    upsert_bounded_index(env, key, candidates);
+    upsert_bounded_index(env, key, sorted);
 }
 
 // ─── Lifetime leaderboard ─────────────────────────────────────────────────────

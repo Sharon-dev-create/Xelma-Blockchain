@@ -1,6 +1,60 @@
 use super::*;
 
 #[test]
+fn completed_settlement_refreshes_lifetime_and_season_rankings_with_ties() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.create_round(&1_0000000, &None);
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let loser = Address::generate(&env);
+    for user in [&alice, &bob, &loser] {
+        client.mint_initial(user);
+    }
+    client.place_bet(&alice, &10_0000000, &BetSide::Up);
+    client.place_bet(&bob, &10_0000000, &BetSide::Up);
+    client.place_bet(&loser, &10_0000000, &BetSide::Down);
+
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+    client.resolve_round(&OraclePayload {
+        price: 2_0000000,
+        timestamp: env.ledger().timestamp(),
+        round_id: client.get_active_round().unwrap().start_ledger,
+        nonce: 1,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id,
+        confidence: None,
+        attestation: None,
+    });
+
+    let lifetime_wins = client.get_leaderboard_by_wins(&None, &10).0;
+    let season_wins = client.get_season_leaderboard_by_wins(&1, &0, &10);
+    let lifetime_streak = client.get_leaderboard_by_streak(&None, &10).0;
+    let season_streak = client.get_season_leaderboard_by_streak(&1, &0, &10);
+    let mut expected_tie = [alice.clone(), bob.clone()];
+    expected_tie.sort_unstable();
+    assert_eq!(lifetime_wins.len(), 3);
+    assert_eq!(season_wins.len(), 3);
+    assert_eq!(lifetime_streak.len(), 3);
+    assert_eq!(season_streak.len(), 3);
+    for (i, expected) in expected_tie.iter().enumerate() {
+        assert_eq!(lifetime_wins.get(i as u32).unwrap().user, *expected);
+        assert_eq!(season_wins.get(i as u32).unwrap().user, *expected);
+        assert_eq!(lifetime_streak.get(i as u32).unwrap().user, *expected);
+        assert_eq!(season_streak.get(i as u32).unwrap().user, *expected);
+    }
+    assert_eq!(lifetime_wins.get(0).unwrap().stats.total_wins, 1);
+    assert_eq!(season_wins.get(0).unwrap().wins, 1);
+}
+
+#[test]
 fn test_resolve_round_price_unchanged() {
     let env = Env::default();
     let contract_id = env.register(VirtualTokenContract, ());
