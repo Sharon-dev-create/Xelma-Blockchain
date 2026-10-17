@@ -152,8 +152,6 @@ pub fn sort_addresses(addresses: Vec<Address>) -> Vec<Address> {
 
 /// Accumulates `amount` into a user's pending winnings, enforcing the cap if set (Issue #120).
 pub fn _accumulate_pending(env: &Env, user: Address, amount: i128) -> Result<(), ContractError> {
-    #[cfg(test)]
-    let diag = crate::settlement::_diag_budget(env);
     let user_key = user.clone();
     let key = DataKeyScoped::PendingWinnings(user);
     let existing: i128 = env.storage().persistent().get(&key).unwrap_or(0);
@@ -181,8 +179,6 @@ pub fn _accumulate_pending(env: &Env, user: Address, amount: i128) -> Result<(),
         .set(&updated_key, &current_ledger);
     _extend_written_persistent_ttl(env, &updated_key);
 
-    #[cfg(test)]
-    crate::settlement::_diag_report(env, "pending_update_call", diag);
     Ok(())
 }
 

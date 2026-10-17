@@ -38,25 +38,6 @@ struct PendingDisputeSettlement {
     deadline_ledger: u32,
 }
 
-#[cfg(test)]
-pub(crate) fn _diag_budget(env: &Env) -> (u64, u64) {
-    let budget = env.cost_estimate().budget();
-    (
-        budget.cpu_instruction_cost(),
-        budget.memory_bytes_cost(),
-    )
-}
-
-#[cfg(test)]
-pub(crate) fn _diag_report(env: &Env, label: &str, before: (u64, u64)) {
-    let after = _diag_budget(env);
-    std::println!(
-        "[settlement-stage] name={label} cpu={} memory={}",
-        after.0.saturating_sub(before.0),
-        after.1.saturating_sub(before.1)
-    );
-}
-
 fn _pending_disputes_key(env: &Env) -> Symbol {
     Symbol::new(env, "PendingDisputes")
 }
@@ -116,6 +97,7 @@ fn _clear_dispute_round_storage(
     round_id: u64,
     round_mode: &RoundMode,
     participants: &Vec<Address>,
+    precision_key_mask: Option<&Vec<u32>>,
 ) {
     for i in 0..participants.len() {
         if let Some(user) = participants.get(i) {
@@ -126,12 +108,19 @@ fn _clear_dispute_round_storage(
                         .remove(&DataKeyScoped::Position(round_id, user));
                 }
                 RoundMode::Precision => {
-                    env.storage()
-                        .persistent()
-                        .remove(&DataKeyScoped::PrecisionPosition(round_id, user.clone()));
-                    env.storage()
-                        .persistent()
-                        .remove(&DataKeyScoped::PrecisionCommitment(round_id, user));
+                    let key_mask = precision_key_mask
+                        .and_then(|mask| mask.get(i))
+                        .unwrap_or(3);
+                    if key_mask & 1 != 0 {
+                        env.storage()
+                            .persistent()
+                            .remove(&DataKeyScoped::PrecisionPosition(round_id, user.clone()));
+                    }
+                    if key_mask & 2 != 0 {
+                        env.storage()
+                            .persistent()
+                            .remove(&DataKeyScoped::PrecisionCommitment(round_id, user));
+                    }
                 }
             }
         }
@@ -1322,8 +1311,6 @@ fn _complete_settlement(
     final_price: u128,
     confidence: Option<u32>,
 ) -> Result<(i128, u32), ContractError> {
-    #[cfg(test)]
-    let diag_start = _diag_budget(env);
     let round_id = round.round_id;
     let season_id = crate::leaderboard::_current_season_id(env);
     let participants: Vec<Address> = sort_addresses(
@@ -1332,7 +1319,7 @@ fn _complete_settlement(
             .get(&DataKeyScoped::RoundParticipants(round_id))
             .unwrap_or(Vec::new(env)),
     );
-    let (fee_amount, precision_total_pot) = match round.mode {
+    let (fee_amount, precision_total_pot, precision_key_mask) = match round.mode {
         RoundMode::UpDown => {
             let (one_sided, fee) = _resolve_updown_mode(
                 env,
@@ -1350,10 +1337,10 @@ fn _complete_settlement(
                     (round_id, round.pool_up, round.pool_down),
                 );
             }
-            (fee, None)
+            (fee, None, None)
         }
         RoundMode::Precision => {
-            let (fee, total_pot) = _resolve_precision_mode(
+            let (fee, total_pot, key_mask) = _resolve_precision_mode(
                 env,
                 round_id,
                 final_price,
@@ -1362,21 +1349,13 @@ fn _complete_settlement(
                 season_id,
                 &participants,
             )?;
-            (fee, Some(total_pot))
+            (fee, Some(total_pot), Some(key_mask))
         }
     };
-    #[cfg(test)]
-    _diag_report(env, "participant_resolution", diag_start);
 
-    #[cfg(test)]
-    let diag_leaderboard = _diag_budget(env);
     crate::leaderboard::_refresh_settlement_leaderboards(env, season_id, &participants);
-    #[cfg(test)]
-    _diag_report(env, "leaderboard_refresh", diag_leaderboard);
     let participant_count = participants.len() as u32;
 
-    #[cfg(test)]
-    let diag_archive = _diag_budget(env);
     _archive_round_with_total_pot(
         env,
         round,
@@ -1387,14 +1366,14 @@ fn _complete_settlement(
         confidence,
         precision_total_pot,
     );
-    #[cfg(test)]
-    _diag_report(env, "archive", diag_archive);
 
-    #[cfg(test)]
-    let diag_cleanup = _diag_budget(env);
-    _clear_dispute_round_storage(env, round_id, &round.mode, &participants);
-    #[cfg(test)]
-    _diag_report(env, "cleanup", diag_cleanup);
+    _clear_dispute_round_storage(
+        env,
+        round_id,
+        &round.mode,
+        &participants,
+        precision_key_mask.as_ref(),
+    );
 
     // `_clear_dispute_round_storage` also removes RoundParticipants and the
     // mode-specific global position indexes.
@@ -1512,7 +1491,7 @@ pub fn void_round(env: Env, round_id: u64) -> Result<(), ContractError> {
         0,
         pending.confidence,
     );
-    _clear_dispute_round_storage(&env, round_id, &pending.round.mode, &participants);
+    _clear_dispute_round_storage(&env, round_id, &pending.round.mode, &participants, None);
     _remove_pending_dispute(&env, round_id);
 
     #[allow(deprecated)]
@@ -1912,7 +1891,7 @@ pub fn _resolve_precision_mode(
     defer_leaderboards: bool,
     season_id: u32,
     participants: &Vec<Address>,
-) -> Result<(i128, i128), ContractError> {
+) -> Result<(i128, i128, Vec<u32>), ContractError> {
     #[cfg(feature = "legacy-map-settlement")]
     if participants.is_empty() {
         let legacy: Map<Address, PrecisionPrediction> = env
@@ -1921,14 +1900,15 @@ pub fn _resolve_precision_mode(
             .get(&DataKeyCore::PrecisionPositions)
             .unwrap_or(Map::new(env));
         if legacy.is_empty() {
-            return Ok((0, 0));
+            return Ok((0, 0, Vec::new(env)));
         }
-        return _resolve_precision_legacy(env, round_id, &legacy, final_price);
+        let (fee, total_pot) = _resolve_precision_legacy(env, round_id, &legacy, final_price)?;
+        return Ok((fee, total_pot, Vec::new(env)));
     }
 
     #[cfg(not(feature = "legacy-map-settlement"))]
     if participants.is_empty() {
-        return Ok((0, 0));
+        return Ok((0, 0, Vec::new(env)));
     }
 
     let mut min_diff: Option<u128> = None;
@@ -1938,6 +1918,7 @@ pub fn _resolve_precision_mode(
     let mut participant_amounts: StdVec<i128> = StdVec::with_capacity(p_len);
     let mut participant_prices: StdVec<u128> = StdVec::with_capacity(p_len);
     let mut participant_revealed: StdVec<bool> = StdVec::with_capacity(p_len);
+    let mut participant_key_mask: Vec<u32> = Vec::new(env);
     let mut is_winner_mask: StdVec<bool> = StdVec::with_capacity(p_len);
 
     for i in 0..participants.len() {
@@ -1950,13 +1931,14 @@ pub fn _resolve_precision_mode(
                 .persistent()
                 .get::<_, PrecisionPrediction>(&pred_key);
 
-            let commitment_opt = if pred_opt.is_none() {
-                env.storage()
-                    .persistent()
-                    .get::<_, PrecisionCommitment>(&commit_key)
-            } else {
-                None
-            };
+            let commitment_opt = env
+                .storage()
+                .persistent()
+                .get::<_, PrecisionCommitment>(&commit_key);
+            participant_key_mask.push_back(
+                (if pred_opt.is_some() { 1 } else { 0 })
+                    | (if commitment_opt.is_some() { 2 } else { 0 }),
+            );
 
             let amount = if let Some(ref pred) = pred_opt {
                 pred.amount
@@ -2132,7 +2114,7 @@ pub fn _resolve_precision_mode(
         }
     }
 
-    Ok((fee_amount, total_pot))
+    Ok((fee_amount, total_pot, participant_key_mask))
 }
 
 #[cfg(feature = "legacy-map-settlement")]
@@ -2440,8 +2422,6 @@ fn _archive_round_with_total_pot(
     };
 
     // Record per-user participation index for paginated history queries.
-    #[cfg(test)]
-    let diag_user_history = _diag_budget(env);
     for i in 0..participants.len() {
         if let Some(user) = participants.get(i) {
             let index_key = DataKeyScoped::UserArchivedRoundIds(user.clone());
@@ -2455,11 +2435,7 @@ fn _archive_round_with_total_pot(
             env.storage().persistent().set(&index_key, &user_rounds);
         }
     }
-    #[cfg(test)]
-    _diag_report(env, "archive_user_history", diag_user_history);
 
-    #[cfg(test)]
-    let diag_summary = _diag_budget(env);
     env.storage()
         .persistent()
         .set(&DataKeyScoped::ArchivedRound(round.round_id), &summary);
@@ -2616,8 +2592,6 @@ fn _archive_round_with_total_pot(
     env.storage()
         .persistent()
         .set(&DataKeyCore::RecentArchivedRoundIds, &recent);
-    #[cfg(test)]
-    _diag_report(env, "archive_summary_and_retention", diag_summary);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2661,8 +2635,6 @@ fn _persist_user_outcome_new(
     payout: i128,
     outcome: UserOutcomeType,
 ) {
-    #[cfg(test)]
-    let diag = _diag_budget(env);
     let key = DataKeyScoped::UserRoundOutcome(round_id, user.clone());
     let record = UserRoundOutcome {
         user: user.clone(),
@@ -2682,8 +2654,6 @@ fn _persist_user_outcome_new(
         (symbol_short!("payout"), symbol_short!("outcome")),
         (round_id, round_mode, user.clone(), payout, outcome_type_u32),
     );
-    #[cfg(test)]
-    _diag_report(env, "outcome_persist_call", diag);
 }
 
 pub fn _refund_under_threshold(
@@ -2928,8 +2898,6 @@ fn _update_stats_win_with_deferral(
     defer_leaderboards: bool,
     season_id: Option<u32>,
 ) -> Result<(), ContractError> {
-    #[cfg(test)]
-    let diag = _diag_budget(env);
     let key = DataKeyScoped::UserStats(user.clone());
     let mut stats: UserStats = env.storage().persistent().get(&key).unwrap_or(UserStats {
         total_wins: 0,
@@ -2962,8 +2930,6 @@ fn _update_stats_win_with_deferral(
         defer_leaderboards,
         season_id,
     )?;
-    #[cfg(test)]
-    _diag_report(env, "stats_win_call", diag);
     Ok(())
 }
 
@@ -2977,8 +2943,6 @@ fn _update_stats_loss_with_deferral(
     defer_leaderboards: bool,
     season_id: Option<u32>,
 ) -> Result<(), ContractError> {
-    #[cfg(test)]
-    let diag = _diag_budget(env);
     let key = DataKeyScoped::UserStats(user.clone());
     let mut stats: UserStats = env.storage().persistent().get(&key).unwrap_or(UserStats {
         total_wins: 0,
@@ -3004,7 +2968,5 @@ fn _update_stats_loss_with_deferral(
         defer_leaderboards,
         season_id,
     )?;
-    #[cfg(test)]
-    _diag_report(env, "stats_loss_call", diag);
     Ok(())
 }

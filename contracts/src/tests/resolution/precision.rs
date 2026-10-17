@@ -1107,6 +1107,7 @@ fn test_precision_commit_reveal_resolution_payout_with_unrevealed_participants()
     client.mint_initial(&bob);
 
     client.create_round(&1_0000000, &Some(1));
+    let round_id = client.get_active_round().unwrap().round_id;
 
     // Alice commits and reveals guess of 2000
     let price_alice = 2000u128;
@@ -1160,6 +1161,23 @@ fn test_precision_commit_reveal_resolution_payout_with_unrevealed_participants()
     // Alice is the only revealed participant, so she wins the entire pot
     assert_eq!(client.get_pending_winnings(&alice), 250_0000000);
     assert_eq!(client.get_pending_winnings(&bob), 0);
+
+    // Revealed users have both a prediction and a commitment; cleanup must
+    // remove both, while unrevealed users retain only a commitment to remove.
+    env.as_contract(&contract_id, || {
+        assert!(!env
+            .storage()
+            .persistent()
+            .has(&DataKeyScoped::PrecisionPosition(round_id, alice.clone())));
+        assert!(!env
+            .storage()
+            .persistent()
+            .has(&DataKeyScoped::PrecisionCommitment(round_id, alice.clone())));
+        assert!(!env
+            .storage()
+            .persistent()
+            .has(&DataKeyScoped::PrecisionCommitment(round_id, bob.clone())));
+    });
 }
 
 #[test]
