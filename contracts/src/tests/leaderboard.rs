@@ -167,10 +167,11 @@ fn test_leaderboard_cursor_pagination() {
     // Last page: next_cursor should be None (exhausted)
     assert!(page2.1.is_none());
 
-    // Fourth page: using last cursor -> empty
-    let page3 = client.get_leaderboard_by_wins(&page2.1, &1);
-    assert_eq!(page3.0.len(), 0);
-    assert!(page3.1.is_none());
+   // The final page has no next cursor. Using the last user's address
+// explicitly should return an empty page.
+   let page3 = client.get_leaderboard_by_wins(&Some(user_c.clone()), &1);
+   assert_eq!(page3.0.len(), 0);
+   assert!(page3.1.is_none());
 }
 
 #[test]

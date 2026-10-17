@@ -71,25 +71,41 @@ fn reinsert_sorted_by_wins(
     addresses: Vec<Address>,
     stats_of: impl Fn(&Address) -> UserStats,
 ) -> Vec<Address> {
+    let len = addresses.len();
+    if len == 0 {
+        return Vec::new(env);
+    }
+
+    // Callers provide the already-sorted existing entries, followed by
+    // the user whose updated stats must be inserted.
+    let inserted_addr = addresses.get_unchecked(len - 1);
+    let inserted_stats = stats_of(&inserted_addr);
+
     let mut sorted: Vec<Address> = Vec::new(env);
-    for addr in addresses.iter() {
-        let addr_stats = stats_of(&addr);
-        let mut inserted = false;
-        for i in 0..sorted.len() {
-            let other = sorted.get_unchecked(i);
-            let other_stats = stats_of(&other);
-            if addr_stats.total_wins > other_stats.total_wins
-                || (addr_stats.total_wins == other_stats.total_wins && addr < other)
+    let mut inserted = false;
+
+    for i in 0..(len - 1) {
+        let addr = addresses.get_unchecked(i);
+
+        if !inserted {
+            let addr_stats = stats_of(&addr);
+
+            if inserted_stats.total_wins > addr_stats.total_wins
+                || (inserted_stats.total_wins == addr_stats.total_wins
+                    && inserted_addr < addr)
             {
-                sorted.insert(i, addr.clone());
+                sorted.push_back(inserted_addr.clone());
                 inserted = true;
-                break;
             }
         }
-        if !inserted {
-            sorted.push_back(addr);
-        }
+
+        sorted.push_back(addr);
     }
+
+    if !inserted {
+        sorted.push_back(inserted_addr);
+    }
+
     sorted
 }
 
@@ -98,25 +114,39 @@ fn reinsert_sorted_by_streak(
     addresses: Vec<Address>,
     stats_of: impl Fn(&Address) -> UserStats,
 ) -> Vec<Address> {
+    let len = addresses.len();
+    if len == 0 {
+        return Vec::new(env);
+    }
+
+    let inserted_addr = addresses.get_unchecked(len - 1);
+    let inserted_stats = stats_of(&inserted_addr);
+
     let mut sorted: Vec<Address> = Vec::new(env);
-    for addr in addresses.iter() {
-        let addr_stats = stats_of(&addr);
-        let mut inserted = false;
-        for i in 0..sorted.len() {
-            let other = sorted.get_unchecked(i);
-            let other_stats = stats_of(&other);
-            if addr_stats.best_streak > other_stats.best_streak
-                || (addr_stats.best_streak == other_stats.best_streak && addr < other)
+    let mut inserted = false;
+
+    for i in 0..(len - 1) {
+        let addr = addresses.get_unchecked(i);
+
+        if !inserted {
+            let addr_stats = stats_of(&addr);
+
+            if inserted_stats.best_streak > addr_stats.best_streak
+                || (inserted_stats.best_streak == addr_stats.best_streak
+                    && inserted_addr < addr)
             {
-                sorted.insert(i, addr.clone());
+                sorted.push_back(inserted_addr.clone());
                 inserted = true;
-                break;
             }
         }
-        if !inserted {
-            sorted.push_back(addr);
-        }
+
+        sorted.push_back(addr);
     }
+
+    if !inserted {
+        sorted.push_back(inserted_addr);
+    }
+
     sorted
 }
 
