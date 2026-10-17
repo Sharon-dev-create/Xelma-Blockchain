@@ -1077,49 +1077,10 @@ pub fn get_leaderboard_by_wins(
         return Err(ContractError::PageSizeExceeded);
     }
 
-    let entries = _collect_leaderboard_entries(&env);
+    let sorted =
+        crate::leaderboard::get_leaderboard_by_wins(env.clone(), 0, MAX_PAGE_SIZE);
 
-    // Sort: wins descending, then address ascending (tiebreaker).
-    let mut sorted: Vec<LeaderboardEntry> = Vec::new(&env);
-    for i in 0..entries.len() {
-        if let Some(e) = entries.get(i) {
-            let mut inserted = false;
-            let mut j: u32 = 0;
-            while j < sorted.len() {
-                if let Some(cur) = sorted.get(j) {
-                    if e.stats.total_wins > cur.stats.total_wins
-                        || (e.stats.total_wins == cur.stats.total_wins && e.user < cur.user)
-                    {
-                        sorted.insert(j, e.clone());
-                        inserted = true;
-                        break;
-                    }
-                }
-                j += 1;
-            }
-            if !inserted {
-                sorted.push_back(e);
-            }
-        }
-    }
-
-    let total = sorted.len();
-    let start = _find_cursor_in_leaderboard(&sorted, &cursor);
-    if start >= total {
-        return Ok((Vec::new(&env), None));
-    }
-
-    let end = start.saturating_add(limit).min(total);
-    let mut items = Vec::new(&env);
-    let mut last_addr: Option<Address> = None;
-    for i in start..end {
-        if let Some(e) = sorted.get(i) {
-            last_addr = Some(e.user.clone());
-            items.push_back(e.clone());
-        }
-    }
-
-    Ok((items, last_addr))
+    _paginate_ranked_leaderboard(&env, sorted, cursor, limit)
 }
 
 /// Returns a cursor-based page of the global leaderboard ordered by best streak
@@ -1134,47 +1095,56 @@ pub fn get_leaderboard_by_streak(
         return Err(ContractError::PageSizeExceeded);
     }
 
-    let entries = _collect_leaderboard_entries(&env);
+    let sorted =
+        crate::leaderboard::get_leaderboard_by_streak(env.clone(), 0, MAX_PAGE_SIZE);
 
-    // Sort: best_streak descending, then address ascending (tiebreaker).
-    let mut sorted: Vec<LeaderboardEntry> = Vec::new(&env);
-    for i in 0..entries.len() {
-        if let Some(e) = entries.get(i) {
-            let mut inserted = false;
-            let mut j: u32 = 0;
-            while j < sorted.len() {
-                if let Some(cur) = sorted.get(j) {
-                    if e.stats.best_streak > cur.stats.best_streak
-                        || (e.stats.best_streak == cur.stats.best_streak && e.user < cur.user)
-                    {
-                        sorted.insert(j, e.clone());
-                        inserted = true;
-                        break;
-                    }
-                }
-                j += 1;
-            }
-            if !inserted {
-                sorted.push_back(e);
-            }
-        }
-    }
-
-    let total = sorted.len();
-    let start = _find_cursor_in_leaderboard(&sorted, &cursor);
-    if start >= total {
-        return Ok((Vec::new(&env), None));
-    }
-
-    let end = start.saturating_add(limit).min(total);
-    let mut items = Vec::new(&env);
-    let mut last_addr: Option<Address> = None;
-    for i in start..end {
-        if let Some(e) = sorted.get(i) {
-            last_addr = Some(e.user.clone());
-            items.push_back(e.clone());
-        }
-    }
-
-    Ok((items, last_addr))
+    _paginate_ranked_leaderboard(&env, sorted, cursor, limit)
 }
+//     if limit == 0 || limit > MAX_PAGE_SIZE {
+//         return Err(ContractError::PageSizeExceeded);
+//     }
+
+//     let entries = _collect_leaderboard_entries(&env);
+
+//     // Sort: best_streak descending, then address ascending (tiebreaker).
+//     let mut sorted: Vec<LeaderboardEntry> = Vec::new(&env);
+//     for i in 0..entries.len() {
+//         if let Some(e) = entries.get(i) {
+//             let mut inserted = false;
+//             let mut j: u32 = 0;
+//             while j < sorted.len() {
+//                 if let Some(cur) = sorted.get(j) {
+//                     if e.stats.best_streak > cur.stats.best_streak
+//                         || (e.stats.best_streak == cur.stats.best_streak && e.user < cur.user)
+//                     {
+//                         sorted.insert(j, e.clone());
+//                         inserted = true;
+//                         break;
+//                     }
+//                 }
+//                 j += 1;
+//             }
+//             if !inserted {
+//                 sorted.push_back(e);
+//             }
+//         }
+//     }
+
+//     let total = sorted.len();
+//     let start = _find_cursor_in_leaderboard(&sorted, &cursor);
+//     if start >= total {
+//         return Ok((Vec::new(&env), None));
+//     }
+
+//     let end = start.saturating_add(limit).min(total);
+//     let mut items = Vec::new(&env);
+//     let mut last_addr: Option<Address> = None;
+//     for i in start..end {
+//         if let Some(e) = sorted.get(i) {
+//             last_addr = Some(e.user.clone());
+//             items.push_back(e.clone());
+//         }
+//     }
+
+//     Ok((items, last_addr))
+// }
