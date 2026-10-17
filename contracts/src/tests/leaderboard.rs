@@ -44,7 +44,7 @@ fn test_leaderboard_ordered_by_wins() {
 
     // Query wins leaderboard with cursor = None (first page)
     let page = client.get_leaderboard_by_wins(&None, &2);
-    assert_eq!(page.0.len(), 3);
+    assert_eq!(page.0.len(), 2);
 
     let entries = page.0;
     // Expected order: Bob (5), Alice (3), Carol (2)
@@ -54,8 +54,8 @@ fn test_leaderboard_ordered_by_wins() {
     assert_eq!(entries.get(1).unwrap().user, user_a);
     assert_eq!(entries.get(1).unwrap().stats.total_wins, 3);
 
-    assert_eq!(entries.get(2).unwrap().user, user_c);
-    assert_eq!(entries.get(2).unwrap().stats.total_wins, 2);
+    // assert_eq!(entries.get(2).unwrap().user, user_c);
+    // assert_eq!(entries.get(2).unwrap().stats.total_wins, 2);
 
     // next_cursor should be Some (the last entry's address)
     assert!(page.1.is_some());
