@@ -25,7 +25,8 @@
 
 use crate::admin::{_ensure_not_paused, _require_supported_schema};
 use crate::common::{
-    _emit_action_rejected, _extend_persistent_ttl, LEADERBOARD_LIMIT, MAX_PAGE_SIZE,
+    _emit_action_rejected, _extend_persistent_ttl, _extend_written_persistent_ttl,
+    LEADERBOARD_LIMIT, MAX_PAGE_SIZE,
 };
 use crate::errors::ContractError;
 use crate::types::{
@@ -396,15 +397,16 @@ fn _update_season_leaderboards(env: &Env, season_id: u32, user: Address) {
 /// `settlement::_update_stats_win` but scoped to `SeasonUserStats`, entirely
 /// independent of the lifetime totals.
 pub fn _update_season_stats_win(env: &Env, user: Address) -> Result<(), ContractError> {
-    _update_season_stats_win_with_deferral(env, user, false)
+    _update_season_stats_win_with_deferral(env, user, false, None)
 }
 
 pub(crate) fn _update_season_stats_win_with_deferral(
     env: &Env,
     user: Address,
     defer: bool,
+    season_override: Option<u32>,
 ) -> Result<(), ContractError> {
-    let season_id = _current_season_id(env);
+    let season_id = season_override.unwrap_or_else(|| _current_season_id(env));
     let key = DataKeyScoped::SeasonUserStats(season_id, user.clone());
     let mut stats: UserStats = env.storage().persistent().get(&key).unwrap_or(UserStats {
         total_wins: 0,
@@ -426,7 +428,7 @@ pub(crate) fn _update_season_stats_win_with_deferral(
     }
 
     env.storage().persistent().set(&key, &stats);
-    _extend_persistent_ttl(env, &key);
+    _extend_written_persistent_ttl(env, &key);
     if !defer {
         _update_season_leaderboards(env, season_id, user);
     }
@@ -435,15 +437,16 @@ pub(crate) fn _update_season_stats_win_with_deferral(
 
 /// Records a season-scoped loss for `user` in the active season.
 pub fn _update_season_stats_loss(env: &Env, user: Address) -> Result<(), ContractError> {
-    _update_season_stats_loss_with_deferral(env, user, false)
+    _update_season_stats_loss_with_deferral(env, user, false, None)
 }
 
 pub(crate) fn _update_season_stats_loss_with_deferral(
     env: &Env,
     user: Address,
     defer: bool,
+    season_override: Option<u32>,
 ) -> Result<(), ContractError> {
-    let season_id = _current_season_id(env);
+    let season_id = season_override.unwrap_or_else(|| _current_season_id(env));
     let key = DataKeyScoped::SeasonUserStats(season_id, user.clone());
     let mut stats: UserStats = env.storage().persistent().get(&key).unwrap_or(UserStats {
         total_wins: 0,
@@ -459,7 +462,7 @@ pub(crate) fn _update_season_stats_loss_with_deferral(
     stats.current_streak = 0;
 
     env.storage().persistent().set(&key, &stats);
-    _extend_persistent_ttl(env, &key);
+    _extend_written_persistent_ttl(env, &key);
     if !defer {
         _update_season_leaderboards(env, season_id, user);
     }

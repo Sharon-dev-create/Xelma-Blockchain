@@ -117,6 +117,14 @@ pub fn _extend_persistent_ttl<K: IntoVal<Env, Val>>(env: &Env, key: &K) {
     }
 }
 
+/// Extends a persistent key's TTL immediately after it has been written.
+/// The caller has already established that the key exists with `set`.
+pub fn _extend_written_persistent_ttl<K: IntoVal<Env, Val>>(env: &Env, key: &K) {
+    env.storage()
+        .persistent()
+        .extend_ttl(key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
+}
+
 /// Extends TTL for a Symbol-keyed persistent entry.
 pub fn _extend_ttl_symbol(env: &Env, key: &Symbol) {
     if env.storage().persistent().has(key) {
@@ -161,7 +169,7 @@ pub fn _accumulate_pending(env: &Env, user: Address, amount: i128) -> Result<(),
     }
 
     env.storage().persistent().set(&key, &new_pending);
-    _extend_persistent_ttl(env, &key);
+    _extend_written_persistent_ttl(env, &key);
 
     // Track the ledger when this entry was last written for expiry checks.
     let updated_key = PendingWinningsUpdatedAtKey(user_key);
@@ -169,7 +177,7 @@ pub fn _accumulate_pending(env: &Env, user: Address, amount: i128) -> Result<(),
     env.storage()
         .persistent()
         .set(&updated_key, &current_ledger);
-    _extend_persistent_ttl(env, &updated_key);
+    _extend_written_persistent_ttl(env, &updated_key);
 
     Ok(())
 }
