@@ -92,18 +92,29 @@ fn _remove_pending_dispute(env: &Env, round_id: u64) {
 /// Clears only storage owned by the terminal round. A newer active round may
 /// already exist while an older result is inside its dispute window, so this
 /// helper deliberately does not remove `ActiveRound`.
-fn _clear_dispute_round_storage(env: &Env, round_id: u64, participants: &Vec<Address>) {
+fn _clear_dispute_round_storage(
+    env: &Env,
+    round_id: u64,
+    round_mode: &RoundMode,
+    participants: &Vec<Address>,
+) {
     for i in 0..participants.len() {
         if let Some(user) = participants.get(i) {
-            env.storage()
-                .persistent()
-                .remove(&DataKeyScoped::Position(round_id, user.clone()));
-            env.storage()
-                .persistent()
-                .remove(&DataKeyScoped::PrecisionPosition(round_id, user.clone()));
-            env.storage()
-                .persistent()
-                .remove(&DataKeyScoped::PrecisionCommitment(round_id, user));
+            match round_mode {
+                RoundMode::UpDown => {
+                    env.storage()
+                        .persistent()
+                        .remove(&DataKeyScoped::Position(round_id, user));
+                }
+                RoundMode::Precision => {
+                    env.storage()
+                        .persistent()
+                        .remove(&DataKeyScoped::PrecisionPosition(round_id, user.clone()));
+                    env.storage()
+                        .persistent()
+                        .remove(&DataKeyScoped::PrecisionCommitment(round_id, user));
+                }
+            }
         }
     }
     env.storage()
@@ -1292,6 +1303,7 @@ fn _complete_settlement(
     final_price: u128,
     confidence: Option<u32>,
 ) -> Result<(i128, u32), ContractError> {
+    _cost_diag(env, "settlement_start");
     let round_id = round.round_id;
     let fee_amount = match round.mode {
         RoundMode::UpDown => {
@@ -1307,6 +1319,7 @@ fn _complete_settlement(
         }
         RoundMode::Precision => _resolve_precision_mode(env, round_id, final_price, false, true)?.0,
     };
+    _cost_diag(env, "settlement_after_resolution");
 
     let participants_for_index: Vec<Address> = env
         .storage()
@@ -1315,6 +1328,7 @@ fn _complete_settlement(
         .unwrap_or(Vec::new(env));
     let season_id = crate::leaderboard::_current_season_id(env);
     crate::leaderboard::_refresh_settlement_leaderboards(env, season_id, &participants_for_index);
+    _cost_diag(env, "settlement_after_leaderboards");
 
     let participants: Vec<Address> = env
         .storage()
@@ -1332,8 +1346,10 @@ fn _complete_settlement(
         fee_amount,
         confidence,
     );
+    _cost_diag(env, "settlement_after_archive");
 
-    _clear_dispute_round_storage(env, round_id, &participants);
+    _clear_dispute_round_storage(env, round_id, &round.mode, &participants);
+    _cost_diag(env, "settlement_after_cleanup");
 
     // `_clear_dispute_round_storage` above performs the same participant key
     // cleanup for every mode, so avoid a second per-participant delete pass.
@@ -1376,6 +1392,19 @@ fn _complete_settlement(
 
     Ok((fee_amount, participant_count))
 }
+
+#[cfg(test)]
+fn _cost_diag(env: &Env, label: &str) {
+    let budget = env.cost_estimate().budget();
+    std::println!(
+        "[stage-cost] stage={label} cpu={} memory={}",
+        budget.cpu_instruction_cost(),
+        budget.memory_bytes_cost()
+    );
+}
+
+#[cfg(not(test))]
+fn _cost_diag(_: &Env, _: &str) {}
 
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
@@ -1472,7 +1501,7 @@ pub fn void_round(env: Env, round_id: u64) -> Result<(), ContractError> {
         0,
         pending.confidence,
     );
-    _clear_dispute_round_storage(&env, round_id, &participants);
+    _clear_dispute_round_storage(&env, round_id, &pending.round.mode, &participants);
     _remove_pending_dispute(&env, round_id);
 
     #[allow(deprecated)]
@@ -1581,12 +1610,14 @@ pub fn _resolve_updown_mode(
     _skip_payout: bool,
     defer_leaderboards: bool,
 ) -> Result<(bool, i128), ContractError> {
+    _cost_diag(env, "updown_before_participant_load");
     let raw_participants: Vec<Address> = env
         .storage()
         .persistent()
         .get(&DataKeyScoped::RoundParticipants(round.round_id))
         .unwrap_or(Vec::new(env));
     let participants = sort_addresses(raw_participants);
+    _cost_diag(env, "updown_after_participant_sort");
 
     // Pure price-direction classification and one-sided check delegated to
     // settlement_math for auditability and golden-vector coverage.
@@ -1681,6 +1712,8 @@ pub fn _resolve_updown_mode(
             }
         }
     }
+
+    _cost_diag(env, "updown_after_resolution_loop");
 
     Ok((is_one_sided, fee_amount))
 }
@@ -1874,12 +1907,14 @@ pub fn _resolve_precision_mode(
     skip_payout: bool,
     defer_leaderboards: bool,
 ) -> Result<(i128, i128), ContractError> {
+    _cost_diag(env, "precision_before_participant_load");
     let mut participants: Vec<Address> = env
         .storage()
         .persistent()
         .get(&DataKeyScoped::RoundParticipants(round_id))
         .unwrap_or(Vec::new(env));
     participants = sort_addresses(participants);
+    _cost_diag(env, "precision_after_participant_sort");
 
     #[cfg(feature = "legacy-map-settlement")]
     if participants.is_empty() {
@@ -1981,6 +2016,7 @@ pub fn _resolve_precision_mode(
             }
         }
     }
+    _cost_diag(env, "precision_after_participant_scan");
 
     let mut fee_amount = 0;
     if !winners.is_empty() && total_pot > 0 {
@@ -2086,6 +2122,8 @@ pub fn _resolve_precision_mode(
             }
         }
     }
+
+    _cost_diag(env, "precision_after_payout_and_stats");
 
     Ok((fee_amount, total_pot))
 }
