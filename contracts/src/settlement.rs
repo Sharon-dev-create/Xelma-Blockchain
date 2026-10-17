@@ -1306,11 +1306,10 @@ fn _complete_settlement(
     let round_id = round.round_id;
     let season_id = crate::leaderboard::_current_season_id(env);
     let participants: Vec<Address> = sort_addresses(
-        env
-        .storage()
-        .persistent()
-        .get(&DataKeyScoped::RoundParticipants(round_id))
-        .unwrap_or(Vec::new(env)),
+        env.storage()
+            .persistent()
+            .get(&DataKeyScoped::RoundParticipants(round_id))
+            .unwrap_or(Vec::new(env)),
     );
     let fee_amount = match round.mode {
         RoundMode::UpDown => {
@@ -1361,30 +1360,9 @@ fn _complete_settlement(
 
     _clear_dispute_round_storage(env, round_id, &round.mode, &participants);
 
-    // `_clear_dispute_round_storage` above performs the same participant key
-    // cleanup for every mode, so avoid a second per-participant delete pass.
-    env.storage()
-        .persistent()
-        .remove(&DataKeyScoped::RoundParticipants(round_id));
-
+    // `_clear_dispute_round_storage` also removes RoundParticipants and the
+    // mode-specific global position indexes.
     env.storage().persistent().remove(&DataKeyCore::ActiveRound);
-    env.storage().persistent().remove(&DataKeyCore::Positions);
-    env.storage()
-        .persistent()
-        .remove(&DataKeyCore::UpDownPositions);
-    // A merge left this guarded re-remove of the active round split across
-    // two fragments (the `if` keyword and its condition were separated from
-    // the body). Rejoined here so the file parses again.
-    if env
-        .storage()
-        .persistent()
-        .get::<_, Round>(&DataKeyCore::ActiveRound)
-        .map(|active| active.round_id == round_id)
-        .unwrap_or(false)
-    {
-        env.storage().persistent().remove(&DataKeyCore::ActiveRound);
-    }
-
     let mode_value: u32 = match round.mode {
         RoundMode::UpDown => 0,
         RoundMode::Precision => 1,
@@ -1609,7 +1587,6 @@ pub fn _resolve_updown_mode(
     season_id: u32,
     participants: &Vec<Address>,
 ) -> Result<(bool, i128), ContractError> {
-
     // Pure price-direction classification and one-sided check delegated to
     // settlement_math for auditability and golden-vector coverage.
     let direction = classify_price_direction(round.price_start, final_price);
@@ -1900,7 +1877,6 @@ pub fn _resolve_precision_mode(
     season_id: u32,
     participants: &Vec<Address>,
 ) -> Result<(i128, i128), ContractError> {
-
     #[cfg(feature = "legacy-map-settlement")]
     if participants.is_empty() {
         let legacy: Map<Address, PrecisionPrediction> = env
@@ -2406,8 +2382,7 @@ pub fn _archive_round(
     for i in 0..participants.len() {
         if let Some(user) = participants.get(i) {
             let index_key = DataKeyScoped::UserArchivedRoundIds(user.clone());
-            let existing_rounds: Option<Vec<u64>> =
-                env.storage().persistent().get(&index_key);
+            let existing_rounds: Option<Vec<u64>> = env.storage().persistent().get(&index_key);
             let user_rounds: Vec<u64> = if let Some(mut user_rounds) = existing_rounds {
                 user_rounds.push_back(round.round_id);
                 user_rounds
