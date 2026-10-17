@@ -959,7 +959,7 @@ fn test_heartbeat_override_emits_event() {
         let (_contract, topics, _data) = e;
         topics.len() == 2
             && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("oracle"))
-            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hb_override"))
+            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hbover"))
     });
     assert!(
         hb_override_event.is_some(),
@@ -1027,7 +1027,7 @@ fn test_arm_heartbeat_override_emits_event() {
         let (_contract, topics, _data) = e;
         topics.len() == 2
             && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("oracle"))
-            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hb_arm_ovr"))
+            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hbarmovr"))
     });
     assert!(arm_event.is_some(), "hb_arm_ovr event must be emitted on arm");
 }
