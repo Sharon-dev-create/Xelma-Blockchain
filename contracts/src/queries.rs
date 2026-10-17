@@ -1057,7 +1057,13 @@ fn _paginate_ranked_leaderboard(
         }
     }
 
-    Ok((items, last_addr))
+    let next_cursor = if end < total {
+    last_addr
+    } else {
+    None
+    };
+
+Ok((items, next_cursor))
 }
 
 /// Returns a cursor-based page of the global leaderboard ordered by total wins
