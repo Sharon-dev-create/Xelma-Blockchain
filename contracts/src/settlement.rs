@@ -2172,9 +2172,14 @@ pub fn _resolve_precision_legacy(
             if let Some(winner) = winners.get(i) {
                 let payout = payouts.get(i).unwrap_or(0);
                 _accumulate_pending(env, winner.user.clone(), payout)?;
-                _update_stats_win(env, winner.user.clone())?;
+                _update_stats_win_with_deferral(
+                    env,
+                    winner.user.clone(),
+                    defer_leaderboards,
+                    Some(season_id),
+                )?;
 
-                _persist_user_outcome(
+                _persist_user_outcome_new(
                     env,
                     round_id,
                     1,
@@ -2204,9 +2209,14 @@ pub fn _resolve_precision_legacy(
                             pred.predicted_price,
                         ),
                     );
-                    _update_stats_loss(env, pred.user.clone())?;
+                    _update_stats_loss_with_deferral(
+                        env,
+                        pred.user.clone(),
+                        defer_leaderboards,
+                        Some(season_id),
+                    )?;
 
-                    _persist_user_outcome(
+                    _persist_user_outcome_new(
                         env,
                         round_id,
                         1,
