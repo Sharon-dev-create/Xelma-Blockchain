@@ -43,7 +43,7 @@ fn test_leaderboard_ordered_by_wins() {
     client.create_round(&1_0000000u128, &None);
 
     // Query wins leaderboard with cursor = None (first page)
-    let page = client.get_leaderboard_by_wins(&None, &10);
+    let page = client.get_leaderboard_by_wins(&None, &2);
     assert_eq!(page.0.len(), 3);
 
     let entries = page.0;
