@@ -167,11 +167,11 @@ fn test_leaderboard_cursor_pagination() {
     // Last page: next_cursor should be None (exhausted)
     assert!(page2.1.is_none());
 
-   // The final page has no next cursor. Using the last user's address
-// explicitly should return an empty page.
-   let page3 = client.get_leaderboard_by_wins(&Some(user_c.clone()), &1);
-   assert_eq!(page3.0.len(), 0);
-   assert!(page3.1.is_none());
+    // The final page has no next cursor. Using the last user's address
+    // explicitly should return an empty page.
+    let page3 = client.get_leaderboard_by_wins(&Some(user_c.clone()), &1);
+    assert_eq!(page3.0.len(), 0);
+    assert!(page3.1.is_none());
 }
 
 #[test]
@@ -240,7 +240,10 @@ fn test_leaderboard_limit_capped_at_max_page_size() {
 
     // Request 150 entries (exceeds MAX_PAGE_SIZE) — should be rejected with PageSizeExceeded error.
     let result = client.try_get_leaderboard_by_wins(&None, &150);
-    assert_eq!(result, Err(Ok(crate::errors::ContractError::PageSizeExceeded)));
+    assert_eq!(
+        result,
+        Err(Ok(crate::errors::ContractError::PageSizeExceeded))
+    );
 }
 
 #[test]
@@ -287,7 +290,10 @@ fn test_leaderboard_zero_limit_is_empty() {
 
     // limit = 0 → should be rejected with PageSizeExceeded error
     let result = client.try_get_leaderboard_by_wins(&None, &0);
-    assert_eq!(result, Err(Ok(crate::errors::ContractError::PageSizeExceeded)));
+    assert_eq!(
+        result,
+        Err(Ok(crate::errors::ContractError::PageSizeExceeded))
+    );
 }
 
 #[test]
@@ -313,12 +319,23 @@ fn test_leaderboard_rejects_over_limit_adversarial() {
 
     // Adversarial: request with limit = MAX_PAGE_SIZE + 1 should be rejected
     let result_wins = client.try_get_leaderboard_by_wins(&None, &101);
-    assert_eq!(result_wins, Err(Ok(crate::errors::ContractError::PageSizeExceeded)), "Should reject limit > MAX_PAGE_SIZE (100)");
+    assert_eq!(
+        result_wins,
+        Err(Ok(crate::errors::ContractError::PageSizeExceeded)),
+        "Should reject limit > MAX_PAGE_SIZE (100)"
+    );
 
     let result_streak = client.try_get_leaderboard_by_streak(&None, &1000);
-    assert_eq!(result_streak, Err(Ok(crate::errors::ContractError::PageSizeExceeded)), "Should reject limit > MAX_PAGE_SIZE (100)");
+    assert_eq!(
+        result_streak,
+        Err(Ok(crate::errors::ContractError::PageSizeExceeded)),
+        "Should reject limit > MAX_PAGE_SIZE (100)"
+    );
 
     // Valid request with exactly MAX_PAGE_SIZE should succeed
     let valid_result = client.get_leaderboard_by_wins(&None, &100);
-    assert!(valid_result.0.len() <= 100, "Should accept limit == MAX_PAGE_SIZE (100)");
+    assert!(
+        valid_result.0.len() <= 100,
+        "Should accept limit == MAX_PAGE_SIZE (100)"
+    );
 }

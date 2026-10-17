@@ -91,8 +91,7 @@ fn reinsert_sorted_by_wins(
             let addr_stats = stats_of(&addr);
 
             if inserted_stats.total_wins > addr_stats.total_wins
-                || (inserted_stats.total_wins == addr_stats.total_wins
-                    && inserted_addr < addr)
+                || (inserted_stats.total_wins == addr_stats.total_wins && inserted_addr < addr)
             {
                 sorted.push_back(inserted_addr.clone());
                 inserted = true;
@@ -132,8 +131,7 @@ fn reinsert_sorted_by_streak(
             let addr_stats = stats_of(&addr);
 
             if inserted_stats.best_streak > addr_stats.best_streak
-                || (inserted_stats.best_streak == addr_stats.best_streak
-                    && inserted_addr < addr)
+                || (inserted_stats.best_streak == addr_stats.best_streak && inserted_addr < addr)
             {
                 sorted.push_back(inserted_addr.clone());
                 inserted = true;
@@ -168,6 +166,78 @@ fn without_user(env: &Env, list: &Vec<Address>, user: &Address) -> Vec<Address> 
         }
     }
     filtered
+}
+
+/// Refresh all four bounded indexes after a settlement has updated every participant.
+pub fn _refresh_settlement_leaderboards(env: &Env, season_id: u32, participants: &Vec<Address>) {
+    refresh_one(
+        env,
+        &DataKeyCore::Ext(DataKeyExt::LeaderboardWins),
+        participants,
+        |a| lifetime_user_stats(env, a),
+        true,
+    );
+    refresh_one(
+        env,
+        &DataKeyCore::Ext(DataKeyExt::LeaderboardStreak),
+        participants,
+        |a| lifetime_user_stats(env, a),
+        false,
+    );
+    refresh_one(
+        env,
+        &DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardWins),
+        participants,
+        |a| season_user_stats_raw(env, season_id, a),
+        true,
+    );
+    refresh_one(
+        env,
+        &DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardStreak),
+        participants,
+        |a| season_user_stats_raw(env, season_id, a),
+        false,
+    );
+}
+
+fn refresh_one(
+    env: &Env,
+    key: &DataKeyCore,
+    participants: &Vec<Address>,
+    stats: impl Fn(&Address) -> UserStats,
+    wins: bool,
+) {
+    let old: Vec<Address> = env.storage().persistent().get(key).unwrap_or(Vec::new(env));
+    let mut candidates = Vec::new(env);
+    for a in old.iter().chain(participants.iter()) {
+        if !candidates.contains(a.clone()) {
+            candidates.push_back(a);
+        }
+    }
+    // Insertion sort by metric descending, address ascending. Candidate sets are bounded by 100 + participants.
+    for i in 1..candidates.len() {
+        let item = candidates.get_unchecked(i);
+        let metric = stats(&item);
+        let mut j = i;
+        while j > 0 {
+            let prev = candidates.get_unchecked(j - 1);
+            let p = stats(&prev);
+            let before = if wins {
+                metric.total_wins > p.total_wins
+                    || (metric.total_wins == p.total_wins && item < prev)
+            } else {
+                metric.best_streak > p.best_streak
+                    || (metric.best_streak == p.best_streak && item < prev)
+            };
+            if !before {
+                break;
+            }
+            candidates.set(j, prev);
+            j -= 1;
+        }
+        candidates.set(j, item);
+    }
+    upsert_bounded_index(env, key, candidates);
 }
 
 // ─── Lifetime leaderboard ─────────────────────────────────────────────────────
@@ -324,6 +394,14 @@ fn _update_season_leaderboards(env: &Env, season_id: u32, user: Address) {
 /// `settlement::_update_stats_win` but scoped to `SeasonUserStats`, entirely
 /// independent of the lifetime totals.
 pub fn _update_season_stats_win(env: &Env, user: Address) -> Result<(), ContractError> {
+    _update_season_stats_win_with_deferral(env, user, false)
+}
+
+pub(crate) fn _update_season_stats_win_with_deferral(
+    env: &Env,
+    user: Address,
+    defer: bool,
+) -> Result<(), ContractError> {
     let season_id = _current_season_id(env);
     let key = DataKeyScoped::SeasonUserStats(season_id, user.clone());
     let mut stats: UserStats = env.storage().persistent().get(&key).unwrap_or(UserStats {
@@ -347,12 +425,22 @@ pub fn _update_season_stats_win(env: &Env, user: Address) -> Result<(), Contract
 
     env.storage().persistent().set(&key, &stats);
     _extend_persistent_ttl(env, &key);
-    _update_season_leaderboards(env, season_id, user);
+    if !defer {
+        _update_season_leaderboards(env, season_id, user);
+    }
     Ok(())
 }
 
 /// Records a season-scoped loss for `user` in the active season.
 pub fn _update_season_stats_loss(env: &Env, user: Address) -> Result<(), ContractError> {
+    _update_season_stats_loss_with_deferral(env, user, false)
+}
+
+pub(crate) fn _update_season_stats_loss_with_deferral(
+    env: &Env,
+    user: Address,
+    defer: bool,
+) -> Result<(), ContractError> {
     let season_id = _current_season_id(env);
     let key = DataKeyScoped::SeasonUserStats(season_id, user.clone());
     let mut stats: UserStats = env.storage().persistent().get(&key).unwrap_or(UserStats {
@@ -370,7 +458,9 @@ pub fn _update_season_stats_loss(env: &Env, user: Address) -> Result<(), Contrac
 
     env.storage().persistent().set(&key, &stats);
     _extend_persistent_ttl(env, &key);
-    _update_season_leaderboards(env, season_id, user);
+    if !defer {
+        _update_season_leaderboards(env, season_id, user);
+    }
     Ok(())
 }
 

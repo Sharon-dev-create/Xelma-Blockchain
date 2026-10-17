@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 extern crate alloc;
-use alloc::vec::Vec as StdVec;
 use crate::admin::{
     _ensure_not_paused, _load_attestation_config, _load_deviation_config, _load_hb_config,
     _require_supported_schema,
@@ -11,9 +10,7 @@ use crate::common::{
     DEFAULT_ORACLE_TIMESTAMP_SKEW, MAX_CLAIM_BATCH_SIZE, MAX_ORACLE_OBSERVATIONS,
     SECONDS_PER_LEDGER, TTL_BUMP_AMOUNT, TTL_BUMP_THRESHOLD,
 };
-use crate::config::{
-    _apply_protocol_fee_precision, _apply_protocol_fee_updown, _read_fee_model,
-};
+use crate::config::{_apply_protocol_fee_precision, _apply_protocol_fee_updown, _read_fee_model};
 use crate::errors::ContractError;
 use crate::settlement_math::{
     classify_price_direction, compute_deviation_bps, compute_updown_winner_payout,
@@ -22,11 +19,12 @@ use crate::settlement_math::{
 use crate::storage::clear_round_storage;
 use crate::types::{
     ArchivedRoundSummary, BetSide, DataKeyCore, DataKeyScoped, DeviationReferenceMode,
-    HbGateConfig, LeaderboardEntry, MultiFeedPayload, OracleHeartbeatRecord, OraclePayload,
-    OracleQuorumConfig, OneSidedPolicy, PendingWinningsUpdatedAtKey, PrecisionCommitment,
+    HbGateConfig, LeaderboardEntry, MultiFeedPayload, OneSidedPolicy, OracleHeartbeatRecord,
+    OraclePayload, OracleQuorumConfig, PendingWinningsUpdatedAtKey, PrecisionCommitment,
     PrecisionPayoutPolicy, PrecisionPrediction, PriceSample, Round, RoundArchiveStatus, RoundMode,
     TwapSamplesKey, UserOutcomeType, UserPosition, UserRoundOutcome, UserStats,
 };
+use alloc::vec::Vec as StdVec;
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{contracttype, symbol_short, Address, Bytes, Env, Map, Symbol, Vec};
 
@@ -210,7 +208,9 @@ pub fn cancel_round(env: Env, reason: u32) -> Result<(), ContractError> {
                     }
 
                     participant_stakes.push_back(refund_amount);
-                    total_stake = total_stake.checked_add(refund_amount).unwrap_or(total_stake);
+                    total_stake = total_stake
+                        .checked_add(refund_amount)
+                        .unwrap_or(total_stake);
 
                     if refund_amount > 0 {
                         _accumulate_pending(&env, user.clone(), refund_amount)?;
@@ -244,7 +244,8 @@ pub fn cancel_round(env: Env, reason: u32) -> Result<(), ContractError> {
             }
         }
         if total_coverage > 0 {
-            let distributed = crate::insurance::deduct_insurance_coverage(&env, round_id, total_coverage)?;
+            let distributed =
+                crate::insurance::deduct_insurance_coverage(&env, round_id, total_coverage)?;
             // Distribute coverage proportionally to participants
             if distributed > 0 && total_stake > 0 {
                 for i in 0..participants.len() {
@@ -941,7 +942,11 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
         .checked_sub(round.start_ledger)
         .ok_or(ContractError::Overflow)?;
     let round_end_estimate = round_start
-        .checked_add((round_duration_ledgers as u64).checked_mul(SECONDS_PER_LEDGER).ok_or(ContractError::Overflow)?)
+        .checked_add(
+            (round_duration_ledgers as u64)
+                .checked_mul(SECONDS_PER_LEDGER)
+                .ok_or(ContractError::Overflow)?,
+        )
         .ok_or(ContractError::Overflow)?;
 
     let lower_bound = round_start.saturating_sub(skew);
@@ -1290,7 +1295,7 @@ fn _complete_settlement(
     let round_id = round.round_id;
     let fee_amount = match round.mode {
         RoundMode::UpDown => {
-            let (one_sided, fee) = _resolve_updown_mode(env, round, final_price, false)?;
+            let (one_sided, fee) = _resolve_updown_mode(env, round, final_price, false, true)?;
             if one_sided {
                 #[allow(deprecated)]
                 env.events().publish(
@@ -1300,8 +1305,16 @@ fn _complete_settlement(
             }
             fee
         }
-        RoundMode::Precision => _resolve_precision_mode(env, round_id, final_price, false)?.0,
+        RoundMode::Precision => _resolve_precision_mode(env, round_id, final_price, false, true)?.0,
     };
+
+    let participants_for_index: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&DataKeyScoped::RoundParticipants(round_id))
+        .unwrap_or(Vec::new(env));
+    let season_id = crate::leaderboard::_current_season_id(env);
+    crate::leaderboard::_refresh_settlement_leaderboards(env, season_id, &participants_for_index);
 
     let participants: Vec<Address> = env
         .storage()
@@ -1352,7 +1365,9 @@ fn _complete_settlement(
 
     env.storage().persistent().remove(&DataKeyCore::ActiveRound);
     env.storage().persistent().remove(&DataKeyCore::Positions);
-    env.storage().persistent().remove(&DataKeyCore::UpDownPositions);
+    env.storage()
+        .persistent()
+        .remove(&DataKeyCore::UpDownPositions);
     // A merge left this guarded re-remove of the active round split across
     // two fragments (the `if` keyword and its condition were separated from
     // the body). Rejoined here so the file parses again.
@@ -1548,10 +1563,7 @@ pub fn _apply_one_sided_policy(
                     _record_refunds_legacy(env, round.round_id, pos_map)?;
                 }
             }
-            (
-                round.pool_up.saturating_add(round.pool_down),
-                0i128,
-            )
+            (round.pool_up.saturating_add(round.pool_down), 0i128)
         }
         OneSidedPolicy::CarryForward => {
             if !participants.is_empty() {
@@ -1562,10 +1574,7 @@ pub fn _apply_one_sided_policy(
                     _record_refunds_legacy(env, round.round_id, pos_map)?;
                 }
             }
-            (
-                0i128,
-                round.pool_up.saturating_add(round.pool_down),
-            )
+            (0i128, round.pool_up.saturating_add(round.pool_down))
         }
     };
 
@@ -1592,6 +1601,7 @@ pub fn _resolve_updown_mode(
     round: &Round,
     final_price: u128,
     _skip_payout: bool,
+    defer_leaderboards: bool,
 ) -> Result<(bool, i128), ContractError> {
     let raw_participants: Vec<Address> = env
         .storage()
@@ -1647,6 +1657,7 @@ pub fn _resolve_updown_mode(
                 BetSide::Up,
                 round.pool_up,
                 round.pool_down,
+                defer_leaderboards,
             )?;
         } else if price_went_down {
             fee_amount = _record_winnings_indexed(
@@ -1656,6 +1667,7 @@ pub fn _resolve_updown_mode(
                 BetSide::Down,
                 round.pool_down,
                 round.pool_up,
+                defer_leaderboards,
             )?;
         }
     } else {
@@ -1882,6 +1894,7 @@ pub fn _resolve_precision_mode(
     round_id: u64,
     final_price: u128,
     skip_payout: bool,
+    defer_leaderboards: bool,
 ) -> Result<(i128, i128), ContractError> {
     let mut participants: Vec<Address> = env
         .storage()
@@ -2014,7 +2027,7 @@ pub fn _resolve_precision_mode(
 
                 if !skip_payout {
                     _accumulate_pending(env, winner.user.clone(), payout)?;
-                    _update_stats_win(env, winner.user.clone())?;
+                    _update_stats_win_with_deferral(env, winner.user.clone(), defer_leaderboards)?;
                 }
 
                 _persist_user_outcome(
@@ -2052,7 +2065,7 @@ pub fn _resolve_precision_mode(
                         (symbol_short!("outcome"), symbol_short!("loss")),
                         (user.clone(), round_id, 1u32, stake, 0u32, predicted_price),
                     );
-                    _update_stats_loss(env, user.clone())?;
+                    _update_stats_loss_with_deferral(env, user.clone(), defer_leaderboards)?;
 
                     _persist_user_outcome(
                         env,
@@ -2267,6 +2280,7 @@ pub fn _record_winnings_indexed(
     winning_side: BetSide,
     winning_pool: i128,
     losing_pool: i128,
+    defer_leaderboards: bool,
 ) -> Result<i128, ContractError> {
     if winning_pool == 0 {
         return Ok(0);
@@ -2290,7 +2304,7 @@ pub fn _record_winnings_indexed(
                     )?;
 
                     _accumulate_pending(env, user.clone(), payout)?;
-                    _update_stats_win(env, user.clone())?;
+                    _update_stats_win_with_deferral(env, user.clone(), defer_leaderboards)?;
 
                     let side_value = match position.side {
                         BetSide::Up => 0,
@@ -2324,7 +2338,7 @@ pub fn _record_winnings_indexed(
                             0u128,
                         ),
                     );
-                    _update_stats_loss(env, user.clone())?;
+                    _update_stats_loss_with_deferral(env, user.clone(), defer_leaderboards)?;
 
                     _persist_user_outcome(
                         env,
@@ -2807,6 +2821,14 @@ pub fn _check_heartbeat_health_blocked(env: &Env, config: &HbGateConfig) -> bool
 }
 
 pub fn _update_stats_win(env: &Env, user: Address) -> Result<(), ContractError> {
+    _update_stats_win_with_deferral(env, user, false)
+}
+
+fn _update_stats_win_with_deferral(
+    env: &Env,
+    user: Address,
+    defer_leaderboards: bool,
+) -> Result<(), ContractError> {
     let key = DataKeyScoped::UserStats(user.clone());
     let mut stats: UserStats = env.storage().persistent().get(&key).unwrap_or(UserStats {
         total_wins: 0,
@@ -2830,12 +2852,22 @@ pub fn _update_stats_win(env: &Env, user: Address) -> Result<(), ContractError> 
 
     env.storage().persistent().set(&key, &stats);
     _extend_persistent_ttl(env, &key);
-    crate::leaderboard::_update_leaderboards(env, user.clone());
-    crate::leaderboard::_update_season_stats_win(env, user)?;
+    if !defer_leaderboards {
+        crate::leaderboard::_update_leaderboards(env, user.clone());
+    }
+    crate::leaderboard::_update_season_stats_win_with_deferral(env, user, defer_leaderboards)?;
     Ok(())
 }
 
 pub fn _update_stats_loss(env: &Env, user: Address) -> Result<(), ContractError> {
+    _update_stats_loss_with_deferral(env, user, false)
+}
+
+fn _update_stats_loss_with_deferral(
+    env: &Env,
+    user: Address,
+    defer_leaderboards: bool,
+) -> Result<(), ContractError> {
     let key = DataKeyScoped::UserStats(user.clone());
     let mut stats: UserStats = env.storage().persistent().get(&key).unwrap_or(UserStats {
         total_wins: 0,
@@ -2852,8 +2884,9 @@ pub fn _update_stats_loss(env: &Env, user: Address) -> Result<(), ContractError>
 
     env.storage().persistent().set(&key, &stats);
     _extend_persistent_ttl(env, &key);
-    crate::leaderboard::_update_leaderboards(env, user.clone());
-    crate::leaderboard::_update_season_stats_loss(env, user)?;
+    if !defer_leaderboards {
+        crate::leaderboard::_update_leaderboards(env, user.clone());
+    }
+    crate::leaderboard::_update_season_stats_loss_with_deferral(env, user, defer_leaderboards)?;
     Ok(())
-
 }
