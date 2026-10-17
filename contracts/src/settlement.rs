@@ -1311,7 +1311,7 @@ fn _complete_settlement(
             .get(&DataKeyScoped::RoundParticipants(round_id))
             .unwrap_or(Vec::new(env)),
     );
-    let fee_amount = match round.mode {
+    let (fee_amount, precision_total_pot) = match round.mode {
         RoundMode::UpDown => {
             let (one_sided, fee) = _resolve_updown_mode(
                 env,
@@ -1329,10 +1329,10 @@ fn _complete_settlement(
                     (round_id, round.pool_up, round.pool_down),
                 );
             }
-            fee
+            (fee, None)
         }
         RoundMode::Precision => {
-            _resolve_precision_mode(
+            let (fee, total_pot) = _resolve_precision_mode(
                 env,
                 round_id,
                 final_price,
@@ -1340,15 +1340,15 @@ fn _complete_settlement(
                 true,
                 season_id,
                 &participants,
-            )?
-            .0
+            )?;
+            (fee, Some(total_pot))
         }
     };
 
     crate::leaderboard::_refresh_settlement_leaderboards(env, season_id, &participants);
     let participant_count = participants.len() as u32;
 
-    _archive_round(
+    _archive_round_with_total_pot(
         env,
         round,
         RoundArchiveStatus::Resolved,
@@ -1356,6 +1356,7 @@ fn _complete_settlement(
         &participants,
         fee_amount,
         confidence,
+        precision_total_pot,
     );
 
     _clear_dispute_round_storage(env, round_id, &round.mode, &participants);
@@ -1914,10 +1915,13 @@ pub fn _resolve_precision_mode(
                 .persistent()
                 .get::<_, PrecisionPrediction>(&pred_key);
 
-            let commitment_opt = env
-                .storage()
-                .persistent()
-                .get::<_, PrecisionCommitment>(&commit_key);
+            let commitment_opt = if pred_opt.is_none() {
+                env.storage()
+                    .persistent()
+                    .get::<_, PrecisionCommitment>(&commit_key)
+            } else {
+                None
+            };
 
             let amount = if let Some(ref pred) = pred_opt {
                 pred.amount
@@ -2172,14 +2176,9 @@ pub fn _resolve_precision_legacy(
             if let Some(winner) = winners.get(i) {
                 let payout = payouts.get(i).unwrap_or(0);
                 _accumulate_pending(env, winner.user.clone(), payout)?;
-                _update_stats_win_with_deferral(
-                    env,
-                    winner.user.clone(),
-                    defer_leaderboards,
-                    Some(season_id),
-                )?;
+                _update_stats_win(env, winner.user.clone())?;
 
-                _persist_user_outcome_new(
+                _persist_user_outcome(
                     env,
                     round_id,
                     1,
@@ -2209,14 +2208,9 @@ pub fn _resolve_precision_legacy(
                             pred.predicted_price,
                         ),
                     );
-                    _update_stats_loss_with_deferral(
-                        env,
-                        pred.user.clone(),
-                        defer_leaderboards,
-                        Some(season_id),
-                    )?;
+                    _update_stats_loss(env, pred.user.clone())?;
 
-                    _persist_user_outcome_new(
+                    _persist_user_outcome(
                         env,
                         round_id,
                         1,
@@ -2373,6 +2367,28 @@ pub fn _archive_round(
     fee_amount: i128,
     confidence: Option<u32>,
 ) {
+    _archive_round_with_total_pot(
+        env,
+        round,
+        status,
+        final_price,
+        participants,
+        fee_amount,
+        confidence,
+        None,
+    );
+}
+
+fn _archive_round_with_total_pot(
+    env: &Env,
+    round: &Round,
+    status: RoundArchiveStatus,
+    final_price: u128,
+    participants: &Vec<Address>,
+    fee_amount: i128,
+    confidence: Option<u32>,
+    known_precision_total_pot: Option<i128>,
+) {
     let status_val = status.clone() as u32;
     let participant_count = participants.len() as u32;
     let settled_at_ledger = env.ledger().sequence();
@@ -2411,6 +2427,9 @@ pub fn _archive_round(
     match round.mode {
         RoundMode::UpDown => {
             total_pot = total_pot_updown(round.pool_up, round.pool_down);
+        }
+        RoundMode::Precision if known_precision_total_pot.is_some() => {
+            total_pot = known_precision_total_pot.unwrap_or(0);
         }
         RoundMode::Precision => {
             let participants: Vec<Address> = env

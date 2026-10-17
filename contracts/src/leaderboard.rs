@@ -172,34 +172,134 @@ fn without_user(env: &Env, list: &Vec<Address>, user: &Address) -> Vec<Address> 
 
 /// Refresh all four bounded indexes after a settlement has updated every participant.
 pub fn _refresh_settlement_leaderboards(env: &Env, season_id: u32, participants: &Vec<Address>) {
-    refresh_one(
+    let wins_key = DataKeyCore::Ext(DataKeyExt::LeaderboardWins);
+    let streak_key = DataKeyCore::Ext(DataKeyExt::LeaderboardStreak);
+    let season_wins_key = DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardWins);
+    let season_streak_key = DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardStreak);
+    let wins_old: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&wins_key)
+        .unwrap_or(Vec::new(env));
+    let streak_old: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&streak_key)
+        .unwrap_or(Vec::new(env));
+    let season_wins_old: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&season_wins_key)
+        .unwrap_or(Vec::new(env));
+    let season_streak_old: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&season_streak_key)
+        .unwrap_or(Vec::new(env));
+
+    // A participant and an existing index entry commonly occur in several
+    // indexes. Load both stats scopes once for the union and reuse them below.
+    let mut all_addresses: StdVec<Address> = wins_old
+        .iter()
+        .chain(streak_old.iter())
+        .chain(season_wins_old.iter())
+        .chain(season_streak_old.iter())
+        .chain(participants.iter())
+        .collect();
+    all_addresses.sort_unstable();
+    all_addresses.dedup();
+    let mut stats_cache = StdVec::with_capacity(all_addresses.len());
+    for address in all_addresses {
+        stats_cache.push((
+            address.clone(),
+            lifetime_user_stats(env, &address),
+            season_user_stats_raw(env, season_id, &address),
+        ));
+    }
+
+    refresh_settlement_index(
         env,
-        &DataKeyCore::Ext(DataKeyExt::LeaderboardWins),
+        &wins_key,
+        &wins_old,
         participants,
-        |a| lifetime_user_stats(env, a),
+        &stats_cache,
+        false,
         true,
     );
-    refresh_one(
+    refresh_settlement_index(
         env,
-        &DataKeyCore::Ext(DataKeyExt::LeaderboardStreak),
+        &streak_key,
+        &streak_old,
         participants,
-        |a| lifetime_user_stats(env, a),
+        &stats_cache,
+        false,
         false,
     );
-    refresh_one(
+    refresh_settlement_index(
         env,
-        &DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardWins),
+        &season_wins_key,
+        &season_wins_old,
         participants,
-        |a| season_user_stats_raw(env, season_id, a),
+        &stats_cache,
+        true,
         true,
     );
-    refresh_one(
+    refresh_settlement_index(
         env,
-        &DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardStreak),
+        &season_streak_key,
+        &season_streak_old,
         participants,
-        |a| season_user_stats_raw(env, season_id, a),
+        &stats_cache,
+        true,
         false,
     );
+}
+
+fn refresh_settlement_index(
+    env: &Env,
+    key: &DataKeyCore,
+    old: &Vec<Address>,
+    participants: &Vec<Address>,
+    stats_cache: &[(Address, UserStats, UserStats)],
+    season: bool,
+    wins: bool,
+) {
+    let mut addresses: StdVec<Address> = old.iter().chain(participants.iter()).collect();
+    addresses.sort_unstable();
+    addresses.dedup();
+
+    let mut ranked: StdVec<(Address, u32)> = addresses
+        .into_iter()
+        .map(|address| {
+            let cache_index = stats_cache
+                .binary_search_by(|(cached, _, _)| cached.cmp(&address))
+                .expect("settlement leaderboard candidate has cached stats");
+            let stats = if season {
+                &stats_cache[cache_index].2
+            } else {
+                &stats_cache[cache_index].1
+            };
+            (
+                address,
+                if wins {
+                    stats.total_wins
+                } else {
+                    stats.best_streak
+                },
+            )
+        })
+        .collect();
+    ranked.sort_by(|(left_addr, left_metric), (right_addr, right_metric)| {
+        right_metric
+            .cmp(left_metric)
+            .then_with(|| left_addr.cmp(right_addr))
+    });
+
+    let mut sorted = Vec::new(env);
+    for (address, _) in ranked {
+        sorted.push_back(address);
+    }
+    upsert_bounded_index(env, key, sorted);
 }
 
 fn refresh_one(
