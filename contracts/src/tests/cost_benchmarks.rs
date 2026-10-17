@@ -374,6 +374,7 @@ fn populate_leaderboard(
     env: &Env,
     contract_id: &Address,
 ) -> soroban_sdk::Vec<Address> {
+    // Fixture construction is setup, not the operation being benchmarked.
     let mut addrs = soroban_sdk::Vec::new(env);
     for _ in 0..LEADERBOARD_LIMIT {
         let user = Address::generate(env);
