@@ -1011,6 +1011,55 @@ fn _collect_leaderboard_entries(env: &Env) -> Vec<LeaderboardEntry> {
     entries
 }
 
+
+// Handles cursor pagination against an already-ranked Vec<LeaderboardEntry>:
+fn _paginate_ranked_leaderboard(
+    env: &Env,
+    sorted: Vec<LeaderboardEntry>,
+    cursor: Option<Address>,
+    limit: u32,
+) -> Result<(Vec<LeaderboardEntry>, Option<Address>), ContractError> {
+    let total = sorted.len();
+
+    let start = match cursor {
+        None => 0,
+        Some(cursor_addr) => {
+            let mut next = None;
+
+            for i in 0..total {
+                if let Some(entry) = sorted.get(i) {
+                    if entry.user == cursor_addr {
+                        next = Some(i.saturating_add(1));
+                        break;
+                    }
+                }
+            }
+
+            match next {
+                Some(index) => index,
+                None => return Ok((Vec::new(env), None)),
+            }
+        }
+    };
+
+    if start >= total {
+        return Ok((Vec::new(env), None));
+    }
+
+    let end = start.saturating_add(limit).min(total);
+    let mut items = Vec::new(env);
+    let mut last_addr = None;
+
+    for i in start..end {
+        if let Some(entry) = sorted.get(i) {
+            last_addr = Some(entry.user.clone());
+            items.push_back(entry);
+        }
+    }
+
+    Ok((items, last_addr))
+}
+
 /// Returns a cursor-based page of the global leaderboard ordered by total wins
 /// descending, with address ascending as tiebreaker.
 ///
