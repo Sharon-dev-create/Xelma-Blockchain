@@ -1305,10 +1305,24 @@ fn _complete_settlement(
 ) -> Result<(i128, u32), ContractError> {
     let round_id = round.round_id;
     let season_id = crate::leaderboard::_current_season_id(env);
+    let participants: Vec<Address> = sort_addresses(
+        env
+        .storage()
+        .persistent()
+        .get(&DataKeyScoped::RoundParticipants(round_id))
+        .unwrap_or(Vec::new(env)),
+    );
     let fee_amount = match round.mode {
         RoundMode::UpDown => {
-            let (one_sided, fee) =
-                _resolve_updown_mode(env, round, final_price, false, true, season_id)?;
+            let (one_sided, fee) = _resolve_updown_mode(
+                env,
+                round,
+                final_price,
+                false,
+                true,
+                season_id,
+                &participants,
+            )?;
             if one_sided {
                 #[allow(deprecated)]
                 env.events().publish(
@@ -1319,22 +1333,20 @@ fn _complete_settlement(
             fee
         }
         RoundMode::Precision => {
-            _resolve_precision_mode(env, round_id, final_price, false, true, season_id)?.0
+            _resolve_precision_mode(
+                env,
+                round_id,
+                final_price,
+                false,
+                true,
+                season_id,
+                &participants,
+            )?
+            .0
         }
     };
 
-    let participants_for_index: Vec<Address> = env
-        .storage()
-        .persistent()
-        .get(&DataKeyScoped::RoundParticipants(round_id))
-        .unwrap_or(Vec::new(env));
-    crate::leaderboard::_refresh_settlement_leaderboards(env, season_id, &participants_for_index);
-
-    let participants: Vec<Address> = env
-        .storage()
-        .persistent()
-        .get(&DataKeyScoped::RoundParticipants(round_id))
-        .unwrap_or(Vec::new(env));
+    crate::leaderboard::_refresh_settlement_leaderboards(env, season_id, &participants);
     let participant_count = participants.len() as u32;
 
     _archive_round(
@@ -1595,13 +1607,8 @@ pub fn _resolve_updown_mode(
     _skip_payout: bool,
     defer_leaderboards: bool,
     season_id: u32,
+    participants: &Vec<Address>,
 ) -> Result<(bool, i128), ContractError> {
-    let raw_participants: Vec<Address> = env
-        .storage()
-        .persistent()
-        .get(&DataKeyScoped::RoundParticipants(round.round_id))
-        .unwrap_or(Vec::new(env));
-    let participants = sort_addresses(raw_participants);
 
     // Pure price-direction classification and one-sided check delegated to
     // settlement_math for auditability and golden-vector coverage.
@@ -1891,13 +1898,8 @@ pub fn _resolve_precision_mode(
     skip_payout: bool,
     defer_leaderboards: bool,
     season_id: u32,
+    participants: &Vec<Address>,
 ) -> Result<(i128, i128), ContractError> {
-    let mut participants: Vec<Address> = env
-        .storage()
-        .persistent()
-        .get(&DataKeyScoped::RoundParticipants(round_id))
-        .unwrap_or(Vec::new(env));
-    participants = sort_addresses(participants);
 
     #[cfg(feature = "legacy-map-settlement")]
     if participants.is_empty() {
@@ -2404,9 +2406,9 @@ pub fn _archive_round(
     for i in 0..participants.len() {
         if let Some(user) = participants.get(i) {
             let index_key = DataKeyScoped::UserArchivedRoundIds(user.clone());
-            let user_rounds: Vec<u64> = if let Some(mut user_rounds) =
-                env.storage().persistent().get(&index_key)
-            {
+            let existing_rounds: Option<Vec<u64>> =
+                env.storage().persistent().get(&index_key);
+            let user_rounds: Vec<u64> = if let Some(mut user_rounds) = existing_rounds {
                 user_rounds.push_back(round.round_id);
                 user_rounds
             } else {
