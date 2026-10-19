@@ -755,6 +755,9 @@ pub fn reveal_prediction(
 /// - Blocked when contract is paused or not in Normal mode.
 pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
+    #[cfg(feature = "progressive-settlement-poc")]
+    crate::progressive_settlement_poc::ensure_not_locked(&env)?;
+
     user.require_auth();
     _ensure_normal_mode(&env)?;
     _enforce_access_control(&env, &user)?;

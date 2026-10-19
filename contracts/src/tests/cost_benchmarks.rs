@@ -29,8 +29,9 @@ use crate::common::LEADERBOARD_LIMIT;
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::types::{BetSide, OraclePayload};
 use soroban_sdk::{
+    contracttype,
     testutils::{Address as _, Ledger as _},
-    Address, Env,
+    Address, Env, Vec as SorobanVec,
 };
 
 // ─── Baseline ceilings (CPU instructions, memory bytes) ──────────────────────
@@ -69,6 +70,161 @@ fn measure<T>(env: &Env, f: impl FnOnce() -> T) -> (u64, u64, T) {
 fn report(label: &str, cpu: u64, mem: u64) {
     std::println!("[cost-benchmark] name={label} cpu_instructions={cpu} memory_bytes={mem}");
     std::println!("| `{label}` | `{cpu}` | `{mem}` |");
+}
+
+// Isolated archive-history layout experiment. These types and helpers are
+// only used by unit-test benchmarks; settlement and query code continue to
+// use UserArchivedRoundIds in every build configuration.
+const ARCHIVE_PAGE_CAPACITY: u32 = 32;
+
+#[contracttype]
+#[derive(Clone)]
+enum ArchivePagePrototypeKey {
+    Meta(Address),
+    Page(Address, u32),
+}
+
+#[contracttype]
+#[derive(Clone)]
+struct ArchivePagePrototypeMeta {
+    count: u32,
+}
+
+fn append_legacy_history(env: &Env, user: &Address, round_id: u64) {
+    use crate::types::DataKeyScoped;
+
+    let key = DataKeyScoped::UserArchivedRoundIds(user.clone());
+    let mut ids: SorobanVec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(SorobanVec::new(env));
+    ids.push_back(round_id);
+    env.storage().persistent().set(&key, &ids);
+}
+
+fn append_paged_history_prototype(env: &Env, user: &Address, round_id: u64) {
+    let meta_key = ArchivePagePrototypeKey::Meta(user.clone());
+    let mut meta: ArchivePagePrototypeMeta = env
+        .storage()
+        .persistent()
+        .get(&meta_key)
+        .unwrap_or(ArchivePagePrototypeMeta { count: 0 });
+    let page_id = meta.count / ARCHIVE_PAGE_CAPACITY;
+    let page_key = ArchivePagePrototypeKey::Page(user.clone(), page_id);
+    let mut page: SorobanVec<u64> = env
+        .storage()
+        .persistent()
+        .get(&page_key)
+        .unwrap_or(SorobanVec::new(env));
+    page.push_back(round_id);
+    env.storage().persistent().set(&page_key, &page);
+    meta.count += 1;
+    env.storage().persistent().set(&meta_key, &meta);
+}
+
+fn seed_archive_history_prototype(env: &Env, user: &Address, history_len: u32, paged: bool) {
+    if paged {
+        let meta = ArchivePagePrototypeMeta { count: history_len };
+        let page_count = (history_len + ARCHIVE_PAGE_CAPACITY - 1) / ARCHIVE_PAGE_CAPACITY;
+        for page_id in 0..page_count {
+            let page_start = page_id * ARCHIVE_PAGE_CAPACITY;
+            let page_end = core::cmp::min(page_start + ARCHIVE_PAGE_CAPACITY, history_len);
+            let key = ArchivePagePrototypeKey::Page(user.clone(), page_id);
+            let mut page: SorobanVec<u64> = SorobanVec::new(env);
+            for index in page_start..page_end {
+                page.push_back(index as u64);
+            }
+            env.storage().persistent().set(&key, &page);
+        }
+        env.storage()
+            .persistent()
+            .set(&ArchivePagePrototypeKey::Meta(user.clone()), &meta);
+    } else {
+        use crate::types::DataKeyScoped;
+
+        let mut ids = SorobanVec::new(env);
+        for index in 0..history_len {
+            ids.push_back(index as u64);
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKeyScoped::UserArchivedRoundIds(user.clone()), &ids);
+    }
+}
+
+#[test]
+fn bench_archive_history_100_appends_legacy_vs_bounded_pages() {
+    // The production cost fixtures use fresh addresses, so depth zero is the
+    // directly comparable case. Deeper cases measure the metadata/page
+    // overhead against repeated whole-vector serialization.
+    for history_len in [0u32, 32, 128] {
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let mut users: SorobanVec<Address> = SorobanVec::new(&env);
+        for _ in 0..100 {
+            users.push_back(Address::generate(&env));
+        }
+        env.as_contract(&contract_id, || {
+            for user in users.iter() {
+                seed_archive_history_prototype(&env, &user, history_len, false);
+            }
+        });
+        let (legacy_cpu, legacy_mem, _) = measure(&env, || {
+            env.as_contract(&contract_id, || {
+                for (index, user) in users.iter().enumerate() {
+                    append_legacy_history(&env, &user, u64::MAX - index as u64);
+                }
+            });
+        });
+
+        env.as_contract(&contract_id, || {
+            for user in users.iter() {
+                seed_archive_history_prototype(&env, &user, history_len, true);
+            }
+        });
+        let (paged_cpu, paged_mem, _) = measure(&env, || {
+            env.as_contract(&contract_id, || {
+                for (index, user) in users.iter().enumerate() {
+                    append_paged_history_prototype(&env, &user, u64::MAX - index as u64);
+                }
+            });
+        });
+
+        std::println!(
+            "[archive-history-prototype] users=100 prior_ids={history_len} legacy_cpu={legacy_cpu} legacy_memory={legacy_mem} paged_cpu={paged_cpu} paged_memory={paged_mem}"
+        );
+        assert!(paged_cpu > 0 && legacy_cpu > 0);
+        assert!(paged_mem > 0 && legacy_mem > 0);
+        env.as_contract(&contract_id, || {
+            for (index, user) in users.iter().enumerate() {
+                let appended_id = u64::MAX - index as u64;
+                let legacy: SorobanVec<u64> = env
+                    .storage()
+                    .persistent()
+                    .get(&crate::types::DataKeyScoped::UserArchivedRoundIds(
+                        user.clone(),
+                    ))
+                    .unwrap();
+                assert_eq!(legacy.len(), history_len + 1);
+                assert_eq!(legacy.get(history_len), Some(appended_id));
+
+                let meta: ArchivePagePrototypeMeta = env
+                    .storage()
+                    .persistent()
+                    .get(&ArchivePagePrototypeKey::Meta(user.clone()))
+                    .unwrap();
+                assert_eq!(meta.count, history_len + 1);
+                let last_page = (history_len + 1 - 1) / ARCHIVE_PAGE_CAPACITY;
+                let page: SorobanVec<u64> = env
+                    .storage()
+                    .persistent()
+                    .get(&ArchivePagePrototypeKey::Page(user, last_page))
+                    .unwrap();
+                assert_eq!(page.get(page.len() - 1), Some(appended_id));
+            }
+        });
+    }
 }
 
 fn setup() -> (

@@ -152,6 +152,9 @@ pub fn sort_addresses(addresses: Vec<Address>) -> Vec<Address> {
 
 /// Accumulates `amount` into a user's pending winnings, enforcing the cap if set (Issue #120).
 pub fn _accumulate_pending(env: &Env, user: Address, amount: i128) -> Result<(), ContractError> {
+    #[cfg(feature = "progressive-settlement-poc")]
+    crate::progressive_settlement_poc::ensure_not_locked(env)?;
+
     let user_key = user.clone();
     let key = DataKeyScoped::PendingWinnings(user);
     let existing: i128 = env.storage().persistent().get(&key).unwrap_or(0);

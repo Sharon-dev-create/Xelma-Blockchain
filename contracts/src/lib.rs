@@ -35,6 +35,11 @@ mod settlement_math;
 mod storage;
 mod types;
 
+// Isolated Phase 1 scaffolding. This feature is disabled by default and does
+// not alter the synchronous settlement path or default contract interface.
+#[cfg(feature = "progressive-settlement-poc")]
+pub mod progressive_settlement_poc;
+
 #[cfg(test)]
 mod tests;
 

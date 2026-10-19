@@ -21,3 +21,4 @@ serde_json = "1"
 default = []
 testutils = ["soroban-sdk/testutils"]
 legacy-map-settlement = []
+progressive-settlement-poc = []

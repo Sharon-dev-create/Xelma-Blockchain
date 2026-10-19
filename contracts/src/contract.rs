@@ -1134,6 +1134,41 @@ impl VirtualTokenContract {
         settlement::finalize_round(env, round_id)
     }
 
+    /// Starts the feature-gated Phase 1 snapshot prototype from an expired
+    /// dispute. It does not apply settlement effects.
+    #[cfg(feature = "progressive-settlement-poc")]
+    pub fn poc_begin_settlement_snapshot(
+        env: Env,
+        round_id: u64,
+    ) -> Result<crate::progressive_settlement_poc::PocProgress, ContractError> {
+        crate::progressive_settlement_poc::begin_snapshot(env, round_id)
+    }
+
+    /// Snapshots at most one bounded participant page for the Phase 1 POC.
+    #[cfg(feature = "progressive-settlement-poc")]
+    pub fn poc_snapshot_settlement_batch(
+        env: Env,
+        round_id: u64,
+        limit: u32,
+    ) -> Result<crate::progressive_settlement_poc::PocProgress, ContractError> {
+        crate::progressive_settlement_poc::snapshot_batch(env, round_id, limit)
+    }
+
+    /// Reads Phase 1 snapshot progress. It does not expose payout results.
+    #[cfg(feature = "progressive-settlement-poc")]
+    pub fn poc_get_settlement_progress(
+        env: Env,
+        round_id: u64,
+    ) -> Option<crate::progressive_settlement_poc::PocProgress> {
+        crate::progressive_settlement_poc::get_progress(env, round_id)
+    }
+
+    /// Aborts a snapshot-only POC before any settlement effects exist.
+    #[cfg(feature = "progressive-settlement-poc")]
+    pub fn poc_abort_settlement_snapshot(env: Env, round_id: u64) -> Result<(), ContractError> {
+        crate::progressive_settlement_poc::abort_snapshot(env, round_id)
+    }
+
     pub fn get_active_round(env: Env) -> Option<Round> {
         queries::get_active_round(env)
     }

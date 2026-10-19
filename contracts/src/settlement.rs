@@ -30,19 +30,19 @@ use soroban_sdk::{contracttype, symbol_short, Address, Bytes, Env, Map, Symbol, 
 
 #[contracttype]
 #[derive(Clone)]
-struct PendingDisputeSettlement {
-    round: Round,
-    final_price: u128,
-    confidence: Option<u32>,
-    resolved_at_ledger: u32,
-    deadline_ledger: u32,
+pub(crate) struct PendingDisputeSettlement {
+    pub(crate) round: Round,
+    pub(crate) final_price: u128,
+    pub(crate) confidence: Option<u32>,
+    pub(crate) resolved_at_ledger: u32,
+    pub(crate) deadline_ledger: u32,
 }
 
 fn _pending_disputes_key(env: &Env) -> Symbol {
     Symbol::new(env, "PendingDisputes")
 }
 
-fn _read_pending_dispute(env: &Env, round_id: u64) -> Option<PendingDisputeSettlement> {
+pub(crate) fn _read_pending_dispute(env: &Env, round_id: u64) -> Option<PendingDisputeSettlement> {
     let key = _pending_disputes_key(env);
     if env.storage().persistent().has(&key) {
         env.storage()
@@ -55,6 +55,11 @@ fn _read_pending_dispute(env: &Env, round_id: u64) -> Option<PendingDisputeSettl
         .get(&key)
         .unwrap_or(Map::new(env));
     pending.get(round_id)
+}
+
+#[cfg(feature = "progressive-settlement-poc")]
+pub(crate) fn _poc_extend_pending_disputes_ttl(env: &Env) {
+    _extend_ttl_symbol(env, &_pending_disputes_key(env));
 }
 
 fn _write_pending_dispute(env: &Env, settlement: &PendingDisputeSettlement) {
@@ -140,6 +145,9 @@ fn _clear_dispute_round_storage(
 /// Cancels the active round and deterministically refunds all participant stakes.
 pub fn cancel_round(env: Env, reason: u32) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
+    #[cfg(feature = "progressive-settlement-poc")]
+    crate::progressive_settlement_poc::ensure_not_locked(&env)?;
+
     let admin: Address = env
         .storage()
         .persistent()
@@ -389,6 +397,9 @@ pub fn is_round_cancelled(env: Env, round_id: u64) -> bool {
 pub fn claim_winnings(env: Env, user: Address) -> Result<i128, ContractError> {
     // ── Checks ────────────────────────────────────────────────────────────
     _require_supported_schema(&env)?;
+    #[cfg(feature = "progressive-settlement-poc")]
+    crate::progressive_settlement_poc::ensure_not_locked(&env)?;
+
     user.require_auth();
     _ensure_not_paused(&env)?; // rejects FullyPaused; allows Normal & ClaimsOnly
 
@@ -467,6 +478,9 @@ pub fn claim_winnings(env: Env, user: Address) -> Result<i128, ContractError> {
 pub fn claim_many(env: Env, users: Vec<Address>) -> Result<Vec<i128>, ContractError> {
     // ── Checks ────────────────────────────────────────────────────────────
     _require_supported_schema(&env)?;
+    #[cfg(feature = "progressive-settlement-poc")]
+    crate::progressive_settlement_poc::ensure_not_locked(&env)?;
+
     _ensure_not_paused(&env)?; // rejects FullyPaused; allows Normal & ClaimsOnly
 
     if users.len() > MAX_CLAIM_BATCH_SIZE {
@@ -1242,6 +1256,9 @@ fn _settle_round_with_price(
     final_price: u128,
     confidence: Option<u32>,
 ) -> Result<(), ContractError> {
+    #[cfg(feature = "progressive-settlement-poc")]
+    crate::progressive_settlement_poc::ensure_not_locked(env)?;
+
     let round_id = round.round_id;
 
     // Minimum participants threshold check
@@ -1403,6 +1420,9 @@ fn _complete_settlement(
 /// stake recorded for this round.
 pub fn void_round(env: Env, round_id: u64) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
+    #[cfg(feature = "progressive-settlement-poc")]
+    crate::progressive_settlement_poc::ensure_not_locked(&env)?;
+
     _ensure_not_paused(&env)?;
 
     let pending =
@@ -1506,6 +1526,9 @@ pub fn void_round(env: Env, round_id: u64) -> Result<(), ContractError> {
 /// has closed. Calling at the exact deadline is allowed.
 pub fn finalize_round(env: Env, round_id: u64) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
+    #[cfg(feature = "progressive-settlement-poc")]
+    crate::progressive_settlement_poc::ensure_not_locked(&env)?;
+
     _ensure_not_paused(&env)?;
 
     let pending = _read_pending_dispute(&env, round_id).ok_or(ContractError::NoActiveRound)?;

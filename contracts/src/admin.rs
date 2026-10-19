@@ -1197,6 +1197,9 @@ pub fn _require_supported_schema(env: &Env) -> Result<u32, ContractError> {
 ///   the entry doesn't exist or expiry is disabled (0).
 pub fn reclaim_expired_pending_winnings(env: Env, user: Address) -> Result<i128, ContractError> {
     _require_supported_schema(&env)?;
+    #[cfg(feature = "progressive-settlement-poc")]
+    crate::progressive_settlement_poc::ensure_not_locked(&env)?;
+
     let admin: Address = env
         .storage()
         .persistent()

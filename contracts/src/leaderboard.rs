@@ -581,6 +581,9 @@ pub(crate) fn _update_season_stats_loss_with_deferral(
 /// ranking rather than inheriting stale entries.
 pub fn reset_leaderboard_season(env: Env) -> Result<u32, ContractError> {
     _require_supported_schema(&env)?;
+    #[cfg(feature = "progressive-settlement-poc")]
+    crate::progressive_settlement_poc::ensure_not_locked(&env)?;
+
     let admin: Address = env
         .storage()
         .persistent()
