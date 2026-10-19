@@ -26,10 +26,10 @@ const POC_ALGORITHM_VERSION: u32 = 1;
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 enum PocKey {
-    ActiveRound,
-    State(u64),
-    AddressPage(u64, u32),
-    ParticipantInput(u64, u32),
+    PocActiveRound,
+    PocState(u64),
+    PocAddressPage(u64, u32),
+    PocParticipantInput(u64, u32),
 }
 
 #[contracttype]
@@ -65,15 +65,18 @@ pub struct PocSettlementState {
 #[derive(Clone, Debug, PartialEq)]
 pub struct PocUpDownParticipantInput {
     pub user: Address,
-    pub position: Option<UserPosition>,
+    /// Zero or one position. The SDK contracttype macro cannot encode
+    /// `Option<custom contracttype>` fields in test builds.
+    pub position: Vec<UserPosition>,
 }
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PocPrecisionParticipantInput {
     pub user: Address,
-    pub prediction: Option<PrecisionPrediction>,
-    pub commitment: Option<PrecisionCommitment>,
+    /// Each vector contains zero or one value for the optional source input.
+    pub prediction: Vec<PrecisionPrediction>,
+    pub commitment: Vec<PrecisionCommitment>,
 }
 
 #[contracttype]
@@ -102,7 +105,7 @@ fn page_count(item_count: u32) -> u32 {
 }
 
 fn state_key(round_id: u64) -> PocKey {
-    PocKey::State(round_id)
+    PocKey::PocState(round_id)
 }
 
 fn read_state(env: &Env, round_id: u64) -> Option<PocSettlementState> {
@@ -114,7 +117,7 @@ fn read_state(env: &Env, round_id: u64) -> Option<PocSettlementState> {
 /// Used by existing mutating paths when the POC has acquired its global lock.
 /// With the feature disabled, none of those paths call this helper.
 pub(crate) fn ensure_not_locked(env: &Env) -> Result<(), ContractError> {
-    let key = PocKey::ActiveRound;
+    let key = PocKey::PocActiveRound;
     _extend_persistent_ttl(env, &key);
     if env.storage().persistent().has(&key) {
         return Err(ContractError::IllegalPhaseTransition);
@@ -159,7 +162,7 @@ pub fn begin_snapshot(env: Env, round_id: u64) -> Result<PocProgress, ContractEr
         .ok_or(ContractError::AdminNotSet)?;
     admin.require_auth();
 
-    let active_key = PocKey::ActiveRound;
+    let active_key = PocKey::PocActiveRound;
     if env.storage().persistent().has(&active_key) {
         return Err(ContractError::IllegalPhaseTransition);
     }
@@ -215,7 +218,7 @@ pub fn begin_snapshot(env: Env, round_id: u64) -> Result<PocProgress, ContractEr
                 page.push_back(user);
             }
         }
-        let page_key = PocKey::AddressPage(round_id, page_id);
+        let page_key = PocKey::PocAddressPage(round_id, page_id);
         env.storage().persistent().set(&page_key, &page);
         _extend_written_persistent_ttl(&env, &page_key);
     }
@@ -253,8 +256,8 @@ pub fn snapshot_batch(env: Env, round_id: u64, limit: u32) -> Result<PocProgress
         return Err(ContractError::PageSizeExceeded);
     }
     crate::settlement::_poc_extend_pending_disputes_ttl(&env);
-    _extend_persistent_ttl(&env, &PocKey::ActiveRound);
-    let active: Option<u64> = env.storage().persistent().get(&PocKey::ActiveRound);
+    _extend_persistent_ttl(&env, &PocKey::PocActiveRound);
+    let active: Option<u64> = env.storage().persistent().get(&PocKey::PocActiveRound);
     if active != Some(round_id) {
         return Err(ContractError::IllegalPhaseTransition);
     }
@@ -271,7 +274,7 @@ pub fn snapshot_batch(env: Env, round_id: u64, limit: u32) -> Result<PocProgress
         let index = state.snapshot_cursor;
         let address_page = index / POC_PAGE_SIZE;
         let address_offset = index % POC_PAGE_SIZE;
-        let page_key = PocKey::AddressPage(round_id, address_page);
+        let page_key = PocKey::PocAddressPage(round_id, address_page);
         _extend_persistent_ttl(&env, &page_key);
         let page: Vec<Address> = env
             .storage()
@@ -283,26 +286,45 @@ pub fn snapshot_batch(env: Env, round_id: u64, limit: u32) -> Result<PocProgress
             .ok_or(ContractError::IllegalPhaseTransition)?;
 
         let input = match &state.round.mode {
-            RoundMode::UpDown => PocParticipantInput::UpDown(PocUpDownParticipantInput {
-                user: user.clone(),
-                position: env
+            RoundMode::UpDown => {
+                let mut position = Vec::new(&env);
+                if let Some(value) = env
                     .storage()
                     .persistent()
-                    .get(&DataKeyScoped::Position(round_id, user.clone())),
-            }),
-            RoundMode::Precision => PocParticipantInput::Precision(PocPrecisionParticipantInput {
-                user: user.clone(),
-                prediction: env
+                    .get(&DataKeyScoped::Position(round_id, user.clone()))
+                {
+                    position.push_back(value);
+                }
+                PocParticipantInput::UpDown(PocUpDownParticipantInput {
+                    user: user.clone(),
+                    position,
+                })
+            }
+            RoundMode::Precision => {
+                let mut prediction = Vec::new(&env);
+                if let Some(value) = env
                     .storage()
                     .persistent()
-                    .get(&DataKeyScoped::PrecisionPosition(round_id, user.clone())),
-                commitment: env
+                    .get(&DataKeyScoped::PrecisionPosition(round_id, user.clone()))
+                {
+                    prediction.push_back(value);
+                }
+                let mut commitment = Vec::new(&env);
+                if let Some(value) = env
                     .storage()
                     .persistent()
-                    .get(&DataKeyScoped::PrecisionCommitment(round_id, user.clone())),
-            }),
+                    .get(&DataKeyScoped::PrecisionCommitment(round_id, user.clone()))
+                {
+                    commitment.push_back(value);
+                }
+                PocParticipantInput::Precision(PocPrecisionParticipantInput {
+                    user: user.clone(),
+                    prediction,
+                    commitment,
+                })
+            }
         };
-        let input_key = PocKey::ParticipantInput(round_id, index);
+        let input_key = PocKey::PocParticipantInput(round_id, index);
         env.storage().persistent().set(&input_key, &input);
         _extend_written_persistent_ttl(&env, &input_key);
         state.snapshot_cursor += 1;
@@ -343,7 +365,7 @@ pub fn abort_snapshot(env: Env, round_id: u64) -> Result<(), ContractError> {
     env.storage().persistent().set(&state_storage_key, &state);
     _extend_written_persistent_ttl(&env, &state_storage_key);
 
-    let active_key = PocKey::ActiveRound;
+    let active_key = PocKey::PocActiveRound;
     let active: Option<u64> = env.storage().persistent().get(&active_key);
     if active == Some(round_id) {
         env.storage().persistent().remove(&active_key);
@@ -358,5 +380,93 @@ fn progress_from_state(round_id: u64, state: &PocSettlementState) -> PocProgress
         participant_count: state.participant_count,
         snapshot_cursor: state.snapshot_cursor,
         started_at_ledger: state.started_at_ledger,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{abort_snapshot, begin_snapshot, PocKey};
+    use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
+    use crate::types::{BetSide, DataKeyCore, OraclePayload};
+    use soroban_sdk::{testutils::{Address as _, Ledger as _}, Address, Env};
+
+    #[test]
+    fn poc_lock_key_is_isolated_from_production_active_round() {
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let user = Address::generate(&env);
+        env.mock_all_auths();
+
+        client.initialize(&admin, &oracle);
+        client.update_oracle_heartbeat(&0);
+        client.set_dispute_ledgers(&5);
+        client.mint_initial(&user);
+        client.create_round(&1_000u128, &None);
+        client.place_bet(&user, &10i128, &BetSide::Up);
+        let first_round = client.get_active_round().unwrap();
+
+        env.ledger()
+            .with_mut(|ledger| ledger.sequence_number = first_round.end_ledger);
+        client.resolve_round(&OraclePayload {
+            price: 2_000,
+            timestamp: env.ledger().timestamp(),
+            round_id: first_round.start_ledger,
+            nonce: 1,
+            network_id: env.ledger().network_id(),
+            contract_addr: contract_id.clone(),
+            confidence: None,
+            attestation: None,
+        });
+
+        // A later production round may be active while the earlier result is
+        // in its dispute window and being snapshotted by the POC.
+        client.create_round(&1_000u128, &None);
+        let production_active = client.get_active_round().unwrap();
+        env.as_contract(&contract_id, || {
+            assert!(!env.storage().persistent().has(&PocKey::PocActiveRound));
+            assert_eq!(
+                env.storage()
+                    .persistent()
+                    .get::<_, crate::types::Round>(&DataKeyCore::ActiveRound),
+                Some(production_active.clone())
+            );
+        });
+
+        let deadline = env.as_contract(&contract_id, || {
+            crate::settlement::_read_pending_dispute(&env, first_round.round_id)
+                .unwrap()
+                .deadline_ledger
+        });
+        env.ledger()
+            .with_mut(|ledger| ledger.sequence_number = deadline);
+        env.as_contract(&contract_id, || {
+            begin_snapshot(env.clone(), first_round.round_id).unwrap();
+            assert_eq!(
+                env.storage()
+                    .persistent()
+                    .get::<_, u64>(&PocKey::PocActiveRound),
+                Some(first_round.round_id)
+            );
+            assert_eq!(
+                env.storage()
+                    .persistent()
+                    .get::<_, crate::types::Round>(&DataKeyCore::ActiveRound),
+                Some(production_active.clone())
+            );
+        });
+
+        env.as_contract(&contract_id, || {
+            abort_snapshot(env.clone(), first_round.round_id).unwrap();
+            assert!(!env.storage().persistent().has(&PocKey::PocActiveRound));
+            assert_eq!(
+                env.storage()
+                    .persistent()
+                    .get::<_, crate::types::Round>(&DataKeyCore::ActiveRound),
+                Some(production_active)
+            );
+        });
     }
 }

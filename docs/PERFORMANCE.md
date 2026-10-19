@@ -24,19 +24,21 @@ The exact numbers depend on the Soroban SDK version and host runtime. Regenerate
 
 | Function / path | CPU instructions | Memory bytes |
 |---|---:|---:|
-| `create_round` | _regenerate_ | _regenerate_ |
-| `place_bet` | _regenerate_ | _regenerate_ |
-| `resolve_round` | _regenerate_ | _regenerate_ |
-| `claim_winnings` | _regenerate_ | _regenerate_ |
-| `get_updown_positions_page` | _regenerate_ | _regenerate_ |
-| `get_precision_predictions_page` | _regenerate_ | _regenerate_ |
-| `get_precision_predictions_cursor` | _regenerate_ | _regenerate_ |
-| `get_updown_positions_cursor` | _regenerate_ | _regenerate_ |
-| `get_leaderboard_by_wins` | _regenerate_ | _regenerate_ |
-| `get_leaderboard_by_streak` | _regenerate_ | _regenerate_ |
-| `leaderboard_update_at_limit` | _regenerate_ | _regenerate_ |
-| `season_reset_at_limit` | _regenerate_ | _regenerate_ |
-| `leaderboard_full_page_read` | _regenerate_ | _regenerate_ |
+| `create_round` | pending | pending |
+| `place_bet` | pending | pending |
+| `resolve_round` | pending | pending |
+| `claim_winnings` | pending | pending |
+| `get_updown_positions_page` | pending | pending |
+| `get_precision_predictions_page` | pending | pending |
+| `get_precision_predictions_cursor` | pending | pending |
+| `get_updown_positions_cursor` | pending | pending |
+| `get_leaderboard_by_wins` | pending | pending |
+| `get_leaderboard_by_streak` | pending | pending |
+| `leaderboard_update_at_limit` | pending | pending |
+| `season_reset_at_limit` | pending | pending |
+| `leaderboard_full_page_read` | pending | pending |
+
+The Issue #573 local run on 2026-10-19 used commit `c62b8f6f395b21338b226f07ea7946d59094b026` with uncommitted working-tree changes. It emitted measurements but failed two max-cap settlement CPU assertions (14 passed, 2 failed), so these are not recorded as a passing baseline. The failing readings were `resolve_round_max_cap_n100`: 313,775,674 CPU instructions and 106,687,700 memory bytes; and `resolve_precision_max_cap_n100`: 299,390,724 CPU instructions and 93,641,481 memory bytes. Keep the table pending until the full default-feature benchmark suite passes.
 
 ## Regression policy
 

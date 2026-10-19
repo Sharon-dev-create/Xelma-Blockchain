@@ -475,6 +475,7 @@ fn bench_cost_resolve_round_max_cap() {
     };
     let (cpu, mem, _) = measure(&env, || client.resolve_round(&payload));
     report("resolve_round_max_cap_n100", cpu, mem);
+    env.cost_estimate().budget().print();
     assert!(cpu <= RESOLVE_CPU_MAX);
     assert!(mem <= RESOLVE_MEM_MAX);
 }
@@ -504,6 +505,7 @@ fn bench_cost_resolve_precision_round_max_cap() {
     };
     let (cpu, mem, _) = measure(&env, || client.resolve_round(&payload));
     report("resolve_precision_max_cap_n100", cpu, mem);
+    env.cost_estimate().budget().print();
     assert!(cpu <= RESOLVE_CPU_MAX);
     assert!(mem <= RESOLVE_MEM_MAX);
 }
