@@ -63,13 +63,24 @@ pub struct PocSettlementState {
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
+pub struct PocUpDownParticipantInput {
+    pub user: Address,
+    pub position: Option<UserPosition>,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PocPrecisionParticipantInput {
+    pub user: Address,
+    pub prediction: Option<PrecisionPrediction>,
+    pub commitment: Option<PrecisionCommitment>,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PocParticipantInput {
-    UpDown(Address, Option<UserPosition>),
-    Precision(
-        Address,
-        Option<PrecisionPrediction>,
-        Option<PrecisionCommitment>,
-    ),
+    UpDown(PocUpDownParticipantInput),
+    Precision(PocPrecisionParticipantInput),
 }
 
 #[contracttype]
@@ -272,21 +283,24 @@ pub fn snapshot_batch(env: Env, round_id: u64, limit: u32) -> Result<PocProgress
             .ok_or(ContractError::IllegalPhaseTransition)?;
 
         let input = match &state.round.mode {
-            RoundMode::UpDown => PocParticipantInput::UpDown(
-                user.clone(),
-                env.storage()
+            RoundMode::UpDown => PocParticipantInput::UpDown(PocUpDownParticipantInput {
+                user: user.clone(),
+                position: env
+                    .storage()
                     .persistent()
                     .get(&DataKeyScoped::Position(round_id, user.clone())),
-            ),
-            RoundMode::Precision => PocParticipantInput::Precision(
-                user.clone(),
-                env.storage()
+            }),
+            RoundMode::Precision => PocParticipantInput::Precision(PocPrecisionParticipantInput {
+                user: user.clone(),
+                prediction: env
+                    .storage()
                     .persistent()
                     .get(&DataKeyScoped::PrecisionPosition(round_id, user.clone())),
-                env.storage()
+                commitment: env
+                    .storage()
                     .persistent()
                     .get(&DataKeyScoped::PrecisionCommitment(round_id, user.clone())),
-            ),
+            }),
         };
         let input_key = PocKey::ParticipantInput(round_id, index);
         env.storage().persistent().set(&input_key, &input);

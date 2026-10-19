@@ -37,6 +37,9 @@ mod types;
 
 // Isolated Phase 1 scaffolding. This feature is disabled by default and does
 // not alter the synchronous settlement path or default contract interface.
+// Its public contract wrappers stay out of `#[contractimpl]`: the resolved
+// Soroban macro emits references to individually `cfg`-removed methods in the
+// default build. POC functions are therefore internal scaffolding for now.
 #[cfg(feature = "progressive-settlement-poc")]
 pub mod progressive_settlement_poc;
 
